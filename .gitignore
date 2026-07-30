@@ -1,0 +1,21 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Go
+blox-sim/blox-sim
+blox-visualize/blox-visualize
+*.test
+
+# Compiled binaries (any platform) — never commit build output
+*.exe
+*.dll
+*.pdb
+
+# Bench + sim output
+/bench-out
+*.log
+
+# misc
+.DS_Store
+.env

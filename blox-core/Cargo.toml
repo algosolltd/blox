@@ -1,0 +1,17 @@
+[package]
+name = "blox-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure, deterministic, I/O-free order book and matching engine."
+repository = "https://github.com/algosolltd/blox"
+
+# No dependencies beyond std. See docs/CORE.md — if you need one, it belongs
+# in blox-server.
+[dependencies]
+
+[dev-dependencies]
+
+[[bench]]
+name = "engine"
+harness = false

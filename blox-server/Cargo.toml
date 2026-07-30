@@ -1,0 +1,8 @@
+[package]
+name = "blox-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+blox-core = { path = "../blox-core" }
