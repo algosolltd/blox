@@ -38,7 +38,7 @@ func main() {
 		noSim      = flag.Bool("no-sim", false, "do not spawn the market simulator")
 		duration   = flag.Duration("duration", 8*time.Hour, "simulator run time")
 		seed       = flag.Uint64("seed", 42, "simulator PRNG seed")
-		makers     = flag.Int("makers", 8, "simulator market makers (more = deeper book)")
+		makers     = flag.Int("makers", 4, "simulator market makers (more = deeper book)")
 		noise      = flag.Int("noise", 4, "simulator noise traders (fewer = quotes survive longer)")
 		momentum   = flag.Int("momentum", 2, "simulator momentum traders")
 		instrument = flag.Int("instrument", 1, "instrument id to visualize")

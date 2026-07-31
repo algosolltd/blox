@@ -142,12 +142,12 @@ func runMarket(addr string, d time.Duration, seed uint64, makers, noise, momentu
 		return false
 	}
 
-	if err := m.LiquidityProvider(addr, seed, 200*time.Microsecond, 5); err != nil {
+	if err := m.LiquidityProvider(addr, seed, time.Millisecond, quoteDepth); err != nil {
 		fmt.Fprintf(os.Stderr, "LP: %v\n", err)
 		return false
 	}
 	for i := 0; i < makers; i++ {
-		if err := m.MarketMaker(addr, idx, seed+uint64(idx), 10, 20, 500*time.Microsecond); err != nil {
+		if err := m.MarketMaker(addr, idx, seed+uint64(idx), 20, quoteDepth, time.Millisecond); err != nil {
 			fmt.Fprintf(os.Stderr, "maker %d: %v\n", i, err)
 			return false
 		}

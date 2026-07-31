@@ -43,6 +43,14 @@ type Market struct {
 	// own fair-value model, and reading back its own quotes would feed back.
 	refPrice atomic.Int64
 
+	// The LP's latest published grid. MMs quote this rather than sampling
+	// refPrice themselves, so the executable book is always the book the
+	// browser sees — an independently-sampled ref can lag the display by a
+	// few ticks and put fills at prices the screen never showed.
+	gridMu  sync.Mutex
+	gridBid []int64
+	gridAsk []int64
+
 	trades  atomic.Int64
 	volume  atomic.Int64
 	orders  atomic.Int64
@@ -101,6 +109,26 @@ func (r *rng) below(n int64) int64 {
 // span returns a value in [-n, n].
 func (r *rng) span(n int64) int64 { return r.below(2*n+1) - n }
 
+// The LP publishes and the MM quotes this same depth of book. One knob so
+// the executable book can never drift from the visible one.
+const quoteDepth = 5
+
+// quoteLevels returns the price grid the LP publishes — bids descending from
+// ref-2, asks ascending from ref+2, one level per 2-tick step. The MM quotes
+// this same grid, so the book the browser sees is the book that executes: a
+// crossing limit order fills at the visible price instead of somewhere
+// between it and the order's own limit.
+func quoteLevels(ref int64, depth int) (bids, asks []int64) {
+	bids = make([]int64, depth)
+	asks = make([]int64, depth)
+	for d := 0; d < depth; d++ {
+		dd := int64(d)
+		bids[d] = ref - 2 - dd*2
+		asks[d] = ref + 2 + dd*2
+	}
+	return
+}
+
 // LiquidityProvider random-walks a reference price and publishes it as a
 // provider snapshot, exercising the LevelBook path.
 func (m *Market) LiquidityProvider(addr string, seed uint64, interval time.Duration, depth int) error {
@@ -132,11 +160,14 @@ func (m *Market) LiquidityProvider(addr string, seed uint64, interval time.Durat
 			}
 			m.refPrice.Store(ref)
 
+			bidPx, askPx := quoteLevels(ref, depth)
+			m.gridMu.Lock()
+			m.gridBid, m.gridAsk = bidPx, askPx
+			m.gridMu.Unlock()
 			var bids, asks []string
 			for d := 0; d < depth; d++ {
-				dd := int64(d)
-				bids = append(bids, strconv.FormatInt(ref-2-dd*2, 10)+":"+strconv.FormatInt(10+r.below(40), 10))
-				asks = append(asks, strconv.FormatInt(ref+2+dd*2, 10)+":"+strconv.FormatInt(10+r.below(40), 10))
+				bids = append(bids, strconv.FormatInt(bidPx[d], 10)+":"+strconv.FormatInt(10+r.below(40), 10))
+				asks = append(asks, strconv.FormatInt(askPx[d], 10)+":"+strconv.FormatInt(10+r.below(40), 10))
 			}
 			if err := c.Send("SNAP 10 %d %s %s", instrument, strings.Join(bids, ","), strings.Join(asks, ",")); err != nil {
 				return
@@ -151,8 +182,11 @@ func (m *Market) LiquidityProvider(addr string, seed uint64, interval time.Durat
 }
 
 // MarketMaker keeps a two-sided quote in the internal book and re-quotes when
-// the reference moves away from it.
-func (m *Market) MarketMaker(addr string, idx int, seed uint64, spread int64, size int64, interval time.Duration) error {
+// the reference moves away from it. It quotes the same grid the LP publishes
+// (see quoteLevels), so the executable book matches the one the browser sees:
+// a crossing limit order fills at the visible price instead of somewhere
+// between it and the order's own limit.
+func (m *Market) MarketMaker(addr string, idx int, seed uint64, size int64, depth int, interval time.Duration) error {
 	c, err := Dial(addr, idBaseAgents+uint64(idx)*idSpan)
 	if err != nil {
 		return err
@@ -166,8 +200,9 @@ func (m *Market) MarketMaker(addr string, idx int, seed uint64, spread int64, si
 
 		r := newRNG(seed)
 		owner := 100 + idx
-		var bidID, askID uint64
-		var quotedAt int64
+		bidIDs := make([]uint64, 0, depth)
+		askIDs := make([]uint64, 0, depth)
+		var quotedBest int64
 		tick := time.NewTicker(interval)
 		defer tick.Stop()
 
@@ -178,27 +213,40 @@ func (m *Market) MarketMaker(addr string, idx int, seed uint64, spread int64, si
 			case <-tick.C:
 			}
 
-			ref := m.refPrice.Load()
-			// Re-quote only when the market has actually moved. Cancelling and
+			m.gridMu.Lock()
+			bidPx, askPx := m.gridBid, m.gridAsk
+			m.gridMu.Unlock()
+			if len(bidPx) < depth {
+				continue // LP hasn't published a full grid yet
+			}
+			// Re-quote only when the grid has actually moved. Cancelling and
 			// replacing on every tick would measure cancel throughput rather
 			// than anything about market making.
-			if bidID != 0 && abs(ref-quotedAt) < spread/2 {
+			if len(bidIDs) > 0 && bidPx[0] == quotedBest {
 				continue
 			}
 
-			if bidID != 0 {
-				_ = c.Send("CANCEL %d %d", instrument, bidID)
-				_ = c.Send("CANCEL %d %d", instrument, askID)
-				m.cancels.Add(2)
+			for _, id := range bidIDs {
+				_ = c.Send("CANCEL %d %d", instrument, id)
+			}
+			for _, id := range askIDs {
+				_ = c.Send("CANCEL %d %d", instrument, id)
+			}
+			if len(bidIDs) > 0 {
+				m.cancels.Add(int64(2 * depth))
 			}
 
-			jitter := r.span(2)
-			bidID, askID = c.ID(), c.ID()
-			qty := size + r.below(size)
-			_ = c.Send("NEW %d %d %d B %d %d LIMIT", instrument, bidID, owner, ref-spread/2+jitter, qty)
-			_ = c.Send("NEW %d %d %d S %d %d LIMIT", instrument, askID, owner, ref+spread/2+jitter, qty)
-			m.orders.Add(2)
-			quotedAt = ref
+			bidIDs = bidIDs[:0]
+			askIDs = askIDs[:0]
+			for d := 0; d < depth; d++ {
+				qty := size + r.below(size)
+				bidIDs = append(bidIDs, c.ID())
+				_ = c.Send("NEW %d %d %d B %d %d LIMIT", instrument, bidIDs[len(bidIDs)-1], owner, bidPx[d], qty)
+				askIDs = append(askIDs, c.ID())
+				_ = c.Send("NEW %d %d %d S %d %d LIMIT", instrument, askIDs[len(askIDs)-1], owner, askPx[d], qty)
+				m.orders.Add(2)
+			}
+			quotedBest = bidPx[0]
 
 			if c.Flush() != nil {
 				return
@@ -426,11 +474,4 @@ func (m *Market) drainTop(c *Client, onTop func(Top)) {
 			}
 		}
 	}
-}
-
-func abs(v int64) int64 {
-	if v < 0 {
-		return -v
-	}
-	return v
 }
