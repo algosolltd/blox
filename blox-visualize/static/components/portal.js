@@ -18,6 +18,7 @@
 // panel set is fixed, so there's nothing per-instance to override yet.
 
 import { applyHandle, magnet } from './snap.js';
+import { ICONS } from './icons.js';
 
 export const HEAD_H = 34; // keep in sync with .panel-head height in style.css
 const RESIZE_HANDLES = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
@@ -26,19 +27,24 @@ const STORAGE_KEY = 'blox-viz-portal-v1';
 const TOP = 0.62; // height fraction of the upper band (chart/trades/depth/book)
 
 export const PANEL_META = [
-  { id: 'chart', label: 'Market Chart', icon: '📈', frac: { x: 0, y: 0, w: 0.44, h: TOP }, minW: 380, minH: 260 },
-  { id: 'trades', label: 'Market Trades', icon: '💹', frac: { x: 0.44, y: 0, w: 0.18, h: TOP }, minW: 190, minH: 200 },
-  { id: 'depth', label: 'Depth Chart', icon: '📊', frac: { x: 0.62, y: 0, w: 0.20, h: TOP }, minW: 220, minH: 200 },
-  { id: 'book', label: 'Order Book', icon: '📘', frac: { x: 0.82, y: 0, w: 0.18, h: TOP }, minW: 210, minH: 200 },
-  { id: 'entry', label: 'Order Entry', icon: '✏️', frac: { x: 0, y: TOP, w: 0.16, h: 1 - TOP }, minW: 250, minH: 320 },
-  { id: 'orders', label: 'Orders', icon: '📋', frac: { x: 0.16, y: TOP, w: 0.56, h: 1 - TOP }, minW: 340, minH: 220 },
-  { id: 'pnl', label: 'Live PnL', icon: '💰', frac: { x: 0.72, y: TOP, w: 0.28, h: 1 - TOP }, minW: 260, minH: 220 },
+  { id: 'chart', label: 'Market Chart', icon: ICONS.chart, frac: { x: 0, y: 0, w: 0.44, h: TOP }, minW: 380, minH: 260 },
+  { id: 'trades', label: 'Market Trades', icon: ICONS.trades, frac: { x: 0.44, y: 0, w: 0.18, h: TOP }, minW: 190, minH: 200 },
+  { id: 'depth', label: 'Depth Chart', icon: ICONS.depth, frac: { x: 0.62, y: 0, w: 0.20, h: TOP }, minW: 220, minH: 200 },
+  { id: 'book', label: 'Order Book', icon: ICONS.book, frac: { x: 0.82, y: 0, w: 0.18, h: TOP }, minW: 210, minH: 200 },
+  { id: 'entry', label: 'Order Entry', icon: ICONS.entry, frac: { x: 0, y: TOP, w: 0.16, h: 1 - TOP }, minW: 250, minH: 320 },
+  { id: 'orders', label: 'Orders', icon: ICONS.orders, frac: { x: 0.16, y: TOP, w: 0.56, h: 1 - TOP }, minW: 340, minH: 220 },
+  { id: 'pnl', label: 'Live PnL', icon: ICONS.pnl, frac: { x: 0.72, y: TOP, w: 0.28, h: 1 - TOP }, minW: 260, minH: 220 },
 ];
 
 // Fit `want` into `total` without going under `mins`, taking the excess from
 // whoever has the most slack. Ported from default-layout.ts's fit().
 function fit(want, mins, total) {
-  const out = [...want];
+  // A row's raw fraction of a merely-average canvas can land under its own
+  // stated minimum before any shrinking even happens (bottom band at
+  // TOP=0.62 does, by 8px, on an ~820px canvas) — the loop below only
+  // corrects a min violation that shrinking caused, not one that was already
+  // there. Floor every row first so "never under mins" actually holds.
+  const out = want.map((v, i) => Math.max(v, mins[i]));
   for (let pass = 0; pass < 4; pass++) {
     const excess = out.reduce((a, b) => a + b, 0) - total;
     if (excess <= 0) break;
@@ -196,6 +202,12 @@ export class Portal {
       this.layout = clampLayoutToCanvas(this.layout, w, h);
     }
     this._renderAll();
+    // clampLayoutToCanvas may have just corrected a rect that violated its own
+    // panel's minH/minW (from an older layout, or a stale one saved before a
+    // PANEL_META tweak) — without this, the fix only ever applies in memory,
+    // so a fresh reload loads the same uncorrected blob and redoes the same
+    // one-time correction forever instead of converging.
+    this._persist();
   }
 
   _renderAll() {

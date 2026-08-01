@@ -11,6 +11,7 @@ import {
 } from './lib/index.js';
 import { Toaster } from './components/toaster.js';
 import { Portal } from './components/portal.js';
+import { ICONS } from './components/icons.js';
 
 (() => {
 
@@ -237,6 +238,9 @@ const scheduleFooter = batched(updateFooter);
 
 // ---------------------------------------------------------------- portal toggles
 
+$('snap-toggle').querySelector('.ic').innerHTML = ICONS.magnet;
+$('lock-toggle').querySelector('.ic').innerHTML = ICONS.lockOpen;
+
 $('snap-toggle').addEventListener('click', () => {
   const on = !portal.snapOn;
   portal.setSnap(on);
@@ -250,7 +254,8 @@ $('lock-toggle').addEventListener('click', () => {
   const btn = $('lock-toggle');
   btn.classList.toggle('on', on);
   btn.setAttribute('aria-pressed', String(on));
-  btn.innerHTML = on ? '<span aria-hidden="true">🔒</span> Locked' : '<span aria-hidden="true">🔓</span> Unlocked';
+  btn.querySelector('.ic').innerHTML = on ? ICONS.lock : ICONS.lockOpen;
+  $('lock-label').textContent = on ? 'Locked' : 'Unlocked';
 });
 
 // ---------------------------------------------------------------- boot

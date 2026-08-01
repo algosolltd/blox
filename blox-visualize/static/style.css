@@ -137,6 +137,8 @@ body {
 }
 .hdr-btn:hover { color: var(--text); border-color: var(--border); }
 .hdr-btn.on { background: var(--accent-dim); border-color: rgba(123,97,255,0.45); color: var(--accent); }
+.hdr-btn .ic { display: inline-flex; }
+.hdr-btn .ic svg { width: 13px; height: 13px; display: block; }
 
 /* ------------------------------------------------ portal canvas */
 /* Free-form panel workspace: drag a header to move, drag any edge/corner to
@@ -223,7 +225,8 @@ body {
 }
 .portal-panel:hover .panel-grip { opacity: 0.75; }
 
-.panel-icon { font-size: 12px; line-height: 1; flex: 0 0 auto; }
+.panel-icon { display: flex; flex: 0 0 auto; color: var(--muted); }
+.panel-icon svg { width: 13px; height: 13px; display: block; }
 .panel-title {
   font-size: 11px;
   font-weight: 650;
@@ -318,7 +321,8 @@ body.portal-gesturing { user-select: none; }
 }
 .tb-btn:hover { color: var(--text); border-color: var(--border); }
 .tb-btn.on { background: var(--accent-dim); border-color: rgba(123,97,255,0.4); color: var(--accent); }
-.tb-btn .ic { font-size: 12px; }
+.tb-btn .ic { display: inline-flex; }
+.tb-btn .ic svg { width: 13px; height: 13px; display: block; }
 .tb-spacer { flex: 1; min-width: 12px; }
 .tb-meta { font-size: 11px; color: var(--muted); white-space: nowrap; flex: 0 0 auto; padding-right: 10px; }
 .tb-help {
