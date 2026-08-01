@@ -153,3 +153,21 @@ The engine is built, tested and benchmarked. Not built yet: real provider
 adapters (needs a chosen feed), margin and positions, and the app layer.
 `docs/IMPLEMENTATION.md` §7 lists every deliberate omission with the condition
 that should trigger building it.
+
+## License
+
+MIT — see [LICENSE](LICENSE). blox is free to use, modify, and ship in
+personal or commercial projects, with no obligation beyond keeping the
+copyright notice in the license text.
+
+> **A small credit is appreciated, never required.** If blox ends up running
+> under the hood of something you ship — especially something public or
+> commercial — a line like *"Powered by [blox](https://github.com/algosolltd/blox-match)"*
+> in your README, docs, or about page helps other people find their way back
+> here. It costs you nothing and means a lot to whoever's maintaining this.
+>
+> A badge works just as well, if that's more your style:
+>
+> ```md
+> [![Powered by blox](https://img.shields.io/badge/powered%20by-blox-7b61ff)](https://github.com/algosolltd/blox-match)
+> ```
