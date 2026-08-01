@@ -110,6 +110,16 @@ export class MarketChart {
       if (b) this.setTF(+b.dataset.tf!);
     }, { signal: this.ac.signal });
 
+    // Trades keep landing in `this.candles` while the tab is hidden — only
+    // the draw is missed, because a backgrounded tab throttles or fully
+    // suspends rAF, and `frame()` only ever ships the single newest bar. On
+    // return that leaves every bar in between sitting in memory but never
+    // drawn: a full repaint from the (complete, up to date) map catches it up
+    // in one shot instead of leaving a hole.
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) this.repaint();
+    }, { signal: this.ac.signal });
+
     void this.init(opts.charts);
   }
 
