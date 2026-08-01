@@ -26,11 +26,12 @@ const (
 
 // Order status values.
 const (
-	stLive      = "LIVE"
-	stFilled    = "FILLED"
-	stCancelled = "CANCELLED"
-	stRejected  = "REJECTED"
-	stLost      = "LOST" // bridge dropped mid-flight; engine state unknown
+	stLive          = "LIVE"
+	stFilled        = "FILLED"
+	stCancelled     = "CANCELLED"
+	stPartialCancel = "PARTIAL_CANCEL" // cancelled with some quantity already filled
+	stRejected      = "REJECTED"
+	stLost          = "LOST" // bridge dropped mid-flight; engine state unknown
 )
 
 type AccountOrder struct {
@@ -242,7 +243,11 @@ func (a *Account) OnCancel(id uint64, remaining, ts int64) *AccountOrder {
 	if o == nil {
 		return nil
 	}
-	a.closeLocked(o, stCancelled, "", ts)
+	status := stCancelled
+	if o.Filled > 0 {
+		status = stPartialCancel
+	}
+	a.closeLocked(o, status, "", ts)
 	return o
 }
 

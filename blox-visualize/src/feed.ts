@@ -25,7 +25,7 @@ export type OpenOrder = {
 export type ClosedOrder = {
   id: number; ts: number; tsEnd?: number; side: Side;
   avgFill: number; filled: number; qty: number;
-  status: "FILLED" | "CANCELLED" | "REJECTED" | "LOST" | "LIVE";
+  status: "FILLED" | "CANCELLED" | "PARTIAL_CANCEL" | "REJECTED" | "LOST" | "LIVE";
   reason?: string; price?: number;
 };
 

@@ -613,11 +613,12 @@ body.portal-gesturing { user-select: none; }
   padding: 2px 6px;
   border-radius: 4px;
 }
-.st-FILLED    { color: var(--green-bright); background: var(--green-dim); }
-.st-CANCELLED { color: var(--muted); background: rgba(135,128,159,0.12); }
-.st-REJECTED  { color: var(--red-bright); background: var(--red-dim); }
-.st-LOST      { color: #e5a50a; background: rgba(229,165,10,0.12); }
-.st-LIVE      { color: var(--accent); background: var(--accent-dim); }
+.st-FILLED         { color: var(--green-bright); background: var(--green-dim); }
+.st-CANCELLED      { color: var(--muted); background: rgba(135,128,159,0.12); }
+.st-PARTIAL_CANCEL { color: #b8860b; background: rgba(184,134,11,0.14); }
+.st-REJECTED       { color: var(--red-bright); background: var(--red-dim); }
+.st-LOST           { color: #e5a50a; background: rgba(229,165,10,0.12); }
+.st-LIVE           { color: var(--accent); background: var(--accent-dim); }
 
 /* ------------------------------------------------ live pnl */
 

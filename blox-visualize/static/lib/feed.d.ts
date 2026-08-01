@@ -40,7 +40,7 @@ export type ClosedOrder = {
     avgFill: number;
     filled: number;
     qty: number;
-    status: "FILLED" | "CANCELLED" | "REJECTED" | "LOST" | "LIVE";
+    status: "FILLED" | "CANCELLED" | "PARTIAL_CANCEL" | "REJECTED" | "LOST" | "LIVE";
     reason?: string;
     price?: number;
 };
