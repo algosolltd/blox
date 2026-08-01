@@ -27,6 +27,8 @@ export declare class Orders {
     private renderOpen;
     private renderClosed;
     private buildActions;
+    /** Drag the bar between the two tables to resize the closed-orders section. */
+    private initSplitter;
     private revertReduceEdit;
     private onClick;
     private onKeydown;

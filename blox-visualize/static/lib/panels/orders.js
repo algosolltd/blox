@@ -20,21 +20,27 @@ export class Orders {
         this.onCancel = opts.onCancel;
         this.onReduce = opts.onReduce;
         this.statusEl = mount(host, `
-      <div class="cols mono muted oc-grid">
-        <span>Time</span><span>Side</span><span>Price</span><span class="r">Qty</span>
-        <span class="r">Filled</span><span>Type</span><span>ID</span><span></span>
+      <div class="o-section o-section-open">
+        <div class="cols mono muted oc-grid">
+          <span>Time</span><span>Side</span><span>Price</span><span class="r">Qty</span>
+          <span class="r">Filled</span><span>Type</span><span>ID</span><span></span>
+        </div>
+        <div class="rows o-open"><div class="empty muted">no working orders</div></div>
       </div>
-      <div class="rows o-open"><div class="empty muted">no working orders</div></div>
-      <div class="cols mono muted oc-grid-cl section-split">
-        <span>Time</span><span>Side</span><span>Avg px</span><span class="r">Filled</span>
-        <span>Status</span><span>ID</span>
-      </div>
-      <div class="rows o-closed"><div class="empty muted">nothing yet</div></div>`, opts);
+      <div class="o-splitter" title="drag to resize"></div>
+      <div class="o-section o-section-closed">
+        <div class="cols mono muted oc-grid-cl">
+          <span>Time</span><span>Side</span><span>Avg px</span><span class="r">Filled</span>
+          <span>Status</span><span>ID</span>
+        </div>
+        <div class="rows o-closed"><div class="empty muted">nothing yet</div></div>
+      </div>`, opts);
         this.openEl = q(host, ".o-open");
         this.closedEl = q(host, ".o-closed");
         const signal = this.ac.signal;
         this.openEl.addEventListener("click", (e) => this.onClick(e), { signal });
         this.openEl.addEventListener("keydown", (e) => this.onKeydown(e), { signal });
+        this.initSplitter(q(host, ".o-splitter"), q(host, ".o-section-closed"));
         this.openEl.addEventListener("focusout", (e) => {
             if (e.target.closest(".o-reduce-input"))
                 this.revertReduceEdit();
@@ -125,6 +131,23 @@ export class Orders {
         cancel.textContent = "✕";
         actions.appendChild(cancel);
         return actions;
+    }
+    /** Drag the bar between the two tables to resize the closed-orders section. */
+    initSplitter(bar, closedSection) {
+        const MIN = 60; // matches the section's own min-height
+        bar.addEventListener("pointerdown", (e) => {
+            bar.setPointerCapture(e.pointerId);
+            const startY = e.clientY;
+            const startH = closedSection.getBoundingClientRect().height;
+            const max = closedSection.parentElement.getBoundingClientRect().height - bar.getBoundingClientRect().height - MIN;
+            const onMove = (e) => {
+                const h = Math.min(max, Math.max(MIN, startH - (e.clientY - startY)));
+                closedSection.style.flexBasis = `${h}px`;
+            };
+            const onUp = () => bar.removeEventListener("pointermove", onMove);
+            bar.addEventListener("pointermove", onMove);
+            bar.addEventListener("pointerup", onUp, { once: true });
+        }, { signal: this.ac.signal });
     }
     revertReduceEdit() {
         if (this.reduceEdit == null)

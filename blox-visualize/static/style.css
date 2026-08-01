@@ -726,8 +726,18 @@ body.portal-gesturing { user-select: none; }
 .bx-panel > .rows { flex: 1; min-height: 0; position: relative; }
 
 .depth-wrap { position: relative; }
-.bx-panel > .o-open { flex: 1 1 0; min-height: 0; }
-.bx-panel > .o-closed { flex: 0 0 32%; min-height: 60px; }
+
+.o-section { display: flex; flex-direction: column; min-height: 0; }
+.bx-panel > .o-section-open { flex: 1 1 0; min-height: 60px; }
+.bx-panel > .o-section-closed { flex: 0 0 32%; min-height: 60px; }
+.o-section > .rows { flex: 1; min-height: 0; position: relative; }
+
+.o-splitter { flex: 0 0 7px; cursor: row-resize; position: relative; touch-action: none; }
+.o-splitter::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 3px; height: 1px;
+  background: var(--border);
+}
+.o-splitter:hover::after { background: var(--accent); }
 
 /* Default grid for TradingPanel. Override .bx-grid to lay it out differently. */
 .bx-grid {
