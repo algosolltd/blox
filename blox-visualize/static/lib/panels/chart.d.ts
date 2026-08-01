@@ -11,7 +11,7 @@ export type MarketChartOptions = PanelChrome & {
     fmt: PriceFormat;
     tfList?: number[];
     maxCandles?: number;
-    /** Draw the session VWAP line. */
+    /** Draw the position VWAP line. */
     vwap?: boolean;
     /** Fill markers retained. Older ones fall off the chart. */
     maxFills?: number;
@@ -31,9 +31,8 @@ export declare class MarketChart {
     private readonly showVwap;
     private readonly candles;
     private readonly lastKey;
-    private readonly cumPv;
-    private readonly cumV;
     private readonly ac;
+    private posAvg;
     private tf;
     private chart;
     private candleSeries;
@@ -56,6 +55,8 @@ export declare class MarketChart {
     /** Dots where your orders filled — green under a buy, red over a sell. */
     setFills(fills: ChartFill[]): void;
     addFill(f: ChartFill): void;
+    /** Your position's average open price, in ticks. 0/null means flat. */
+    setAvg(avg: number | null): void;
     reset(): void;
     setTF(tf: number): void;
     destroy(): void;
@@ -68,6 +69,8 @@ export declare class MarketChart {
     private addCandle;
     private scheduleDraw;
     private frame;
+    /** A value point, or a whitespace point (gap) while flat / avg unknown. */
+    private toVwapPoint;
     private lastBarOhlc;
     private setOhlc;
 }

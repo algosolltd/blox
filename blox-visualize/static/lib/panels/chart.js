@@ -1,5 +1,5 @@
-// Candlestick + volume chart, with session VWAP, your working orders as
-// dashed price lines, and a dot on every fill.
+// Candlestick + volume chart, with your live position's VWAP, working orders
+// as dashed price lines, and a dot on every fill.
 //
 // LightweightCharts is an optional peer dep: pass the namespace in, or leave
 // it out and it is imported on first mount. Trades aggregate into candles
@@ -39,10 +39,11 @@ export class MarketChart {
     // Newest bucket key per timeframe. Without it the draw path walks every key
     // in the map — a 4000-element array allocated on each frame.
     lastKey = new Map();
-    // Running price·qty and qty totals per timeframe, for VWAP.
-    cumPv = new Map();
-    cumV = new Map();
     ac = new AbortController();
+    // Your live position's average open price, in ticks. Null while flat.
+    // Server-computed (volume-weighted across your fills) — the chart just
+    // plots it, it doesn't recompute it from a fill stream.
+    posAvg = null;
     tf;
     chart = null;
     candleSeries = null;
@@ -165,12 +166,26 @@ export class MarketChart {
             this.fills.splice(0, this.fills.length - this.maxFills);
         this.drawMarkers();
     }
+    /** Your position's average open price, in ticks. 0/null means flat. */
+    setAvg(avg) {
+        this.posAvg = avg || null;
+        // The latest bucket in every timeframe represents "now" — nudge it
+        // straight away instead of waiting for the next market trade to redraw it.
+        for (const tf of this.tfList) {
+            const key = this.lastKey.get(tf);
+            const c = key === undefined ? undefined : this.candles.get(tf).get(key);
+            if (!c)
+                continue;
+            c.vwap = this.posAvg;
+            if (tf === this.tf)
+                this.vwapSeries?.update(this.toVwapPoint(c));
+        }
+    }
     reset() {
         for (const m of this.candles.values())
             m.clear();
         this.lastKey.clear();
-        this.cumPv.clear();
-        this.cumV.clear();
+        this.posAvg = null;
         this.fills = [];
         this.orders = [];
         if (this.candleSeries) {
@@ -205,29 +220,34 @@ export class MarketChart {
         const arr = [...this.candles.get(this.tf).values()].sort((a, b) => a.time - b.time);
         this.candleSeries.setData(arr.map((c) => this.toBar(c)));
         this.volSeries.setData(arr.map((c) => this.toVol(c)));
-        this.vwapSeries?.setData(arr.map((c) => ({ time: c.time, value: c.vwap / this.fmt.div })));
+        this.vwapSeries?.setData(arr.map((c) => this.toVwapPoint(c)));
         this.drawMarkers();
         this.drawOrderLines();
         this.lastBarOhlc();
     }
     // Markers must be sorted and land on a bucket boundary, so they are
-    // recomputed against whichever timeframe is on screen.
+    // recomputed against whichever timeframe is on screen. Keyed by bucket so
+    // a candle with several fills still gets one dot, not a stack of them —
+    // the last fill in the bucket wins.
     drawMarkers() {
         if (!this.candleSeries)
             return;
         const tf = this.tf;
-        const markers = this.fills
-            .map((f) => ({
-            time: Math.floor(f.ts / 1000 / tf) * tf,
-            position: f.side === "B" ? "belowBar" : "aboveBar",
-            color: f.side === "B" ? UP : DOWN,
-            shape: "circle",
-            size: 0.8,
-            // Dot only. A price label per fill collides with the candles, the
-            // order lines and the other fills the moment there is more than one;
-            // the exact prices are in the orders table.
-        }))
-            .sort((a, b) => a.time - b.time);
+        const byBucket = new Map();
+        for (const f of this.fills) {
+            const time = Math.floor(f.ts / 1000 / tf) * tf;
+            byBucket.set(time, {
+                time,
+                position: f.side === "B" ? "belowBar" : "aboveBar",
+                color: f.side === "B" ? UP : DOWN,
+                shape: "circle",
+                size: 0.8,
+                // Dot only. A price label per fill collides with the candles, the
+                // order lines and the other fills the moment there is more than one;
+                // the exact prices are in the orders table.
+            });
+        }
+        const markers = [...byBucket.values()].sort((a, b) => a.time - b.time);
         this.candleSeries.setMarkers(markers);
     }
     drawOrderLines() {
@@ -262,15 +282,9 @@ export class MarketChart {
     addCandle(tf, t) {
         const key = Math.floor(t.ts / 1000 / tf) * tf;
         const m = this.candles.get(tf);
-        // Session VWAP: cumulative across the whole stream, so it survives the
-        // eviction of the oldest candles.
-        const pv = (this.cumPv.get(tf) ?? 0) + t.price * t.qty;
-        const v = (this.cumV.get(tf) ?? 0) + t.qty;
-        this.cumPv.set(tf, pv);
-        this.cumV.set(tf, v);
         let c = m.get(key);
         if (!c) {
-            c = { time: key, open: t.price, high: t.price, low: t.price, close: t.price, vol: 0, vwap: 0 };
+            c = { time: key, open: t.price, high: t.price, low: t.price, close: t.price, vol: 0, vwap: this.posAvg };
             m.set(key, c);
             if (m.size > this.maxCandles) {
                 const oldest = m.keys().next().value;
@@ -282,7 +296,6 @@ export class MarketChart {
         c.low = Math.min(c.low, t.price);
         c.close = t.price;
         c.vol += t.qty;
-        c.vwap = v > 0 ? pv / v : t.price;
         // Guarded so a late or out-of-order trade cannot rewind the newest bucket.
         if (key > (this.lastKey.get(tf) ?? -Infinity))
             this.lastKey.set(tf, key);
@@ -307,9 +320,13 @@ export class MarketChart {
             return;
         this.candleSeries.update(this.toBar(c));
         this.volSeries.update(this.toVol(c));
-        this.vwapSeries?.update({ time: c.time, value: c.vwap / this.fmt.div });
+        this.vwapSeries?.update(this.toVwapPoint(c));
         this.lastBarOhlc();
     };
+    /** A value point, or a whitespace point (gap) while flat / avg unknown. */
+    toVwapPoint(c) {
+        return c.vwap == null ? { time: c.time } : { time: c.time, value: c.vwap / this.fmt.div };
+    }
     lastBarOhlc() {
         const key = this.lastKey.get(this.tf);
         const c = key === undefined ? undefined : this.candles.get(this.tf).get(key);

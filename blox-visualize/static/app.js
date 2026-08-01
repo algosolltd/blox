@@ -131,7 +131,10 @@ feed.subscribe({
         .filter(o => o.filled > 0)
         .map(o => ({ ts: o.tsEnd || o.ts, price: o.avgFill, side: o.side })));
     }
-    if (a.pnl) pnl.update(a.pnl);
+    if (a.pnl) {
+      pnl.update(a.pnl);
+      chart.setAvg(a.pnl.avg);
+    }
   },
 
   onStats(s) {
