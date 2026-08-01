@@ -33,17 +33,27 @@ type Hub struct {
 	account  *Account
 	engineIn chan<- string
 
+	// Trades retained for the backfill a fresh client gets on connect. Without
+	// it a new tab paints an empty chart and has to wait for live ticks before
+	// anything longer than a few seconds per bar has two bars to draw.
+	history    []Trade
+	historyMax int
+
 	flushEvery time.Duration
 	maxBatch   int
 }
 
-func NewHub(name string, instrument, priceScale int, server string, account *Account, engineIn chan<- string) *Hub {
+func NewHub(name string, instrument, priceScale, historyMax int, server string, account *Account, engineIn chan<- string) *Hub {
+	// Every frame is {type, payload} — the same envelope blox-server's wire.ts
+	// speaks, so one client library reads both servers.
 	hello, _ := json.Marshal(map[string]any{
-		"type":       "hello",
-		"name":       name,
-		"instrument": instrument,
-		"priceScale": priceScale,
-		"server":     server,
+		"type": "hello",
+		"payload": map[string]any{
+			"instrument":   name,
+			"instrumentId": instrument,
+			"priceScale":   priceScale,
+			"server":       server,
+		},
 	})
 	return &Hub{
 		register:   make(chan *wsClient),
@@ -52,15 +62,32 @@ func NewHub(name string, instrument, priceScale int, server string, account *Acc
 		hello:      hello,
 		account:    account,
 		engineIn:   engineIn,
+		historyMax: historyMax,
 		flushEvery: 50 * time.Millisecond,
 		maxBatch:   4000,
 	}
 }
 
+// historyMsg is the backfill. It is sent once per connection, after hello and
+// before any update frame — the client replays it, then applies whatever
+// arrived while it was in flight.
+type historyMsg struct {
+	Type    string         `json:"type"`
+	Payload historyPayload `json:"payload"`
+}
+
+type historyPayload struct {
+	Trades []Trade `json:"trades"`
+}
+
 // updateMsg is the one frame the UI receives on the flush tick. Parts that
 // didn't change since the last tick are simply absent.
 type updateMsg struct {
-	Type   string  `json:"type"`
+	Type    string        `json:"type"`
+	Payload updatePayload `json:"payload"`
+}
+
+type updatePayload struct {
 	Trades []Trade `json:"trades,omitempty"`
 	Book   *Book   `json:"book,omitempty"`
 	Stats  *Stats  `json:"stats,omitempty"`
@@ -71,7 +98,11 @@ type updateMsg struct {
 // omitempty would otherwise swallow "the last order just closed"); Pnl
 // comes along whenever the mark moved.
 type accountMsg struct {
-	Type   string          `json:"type"`
+	Type    string         `json:"type"`
+	Payload accountPayload `json:"payload"`
+}
+
+type accountPayload struct {
 	Full   bool            `json:"full,omitempty"`
 	Open   []*AccountOrder `json:"open,omitempty"`
 	Closed []*AccountOrder `json:"closed,omitempty"`
@@ -80,14 +111,18 @@ type accountMsg struct {
 
 // noticeMsg is a transient toast — fills and rejects, never book noise.
 type noticeMsg struct {
-	Type  string `json:"type"` // "notice"
+	Type    string        `json:"type"` // "notice"
+	Payload noticePayload `json:"payload"`
+}
+
+type noticePayload struct {
 	Level string `json:"level"`
 	Text  string `json:"text"`
 }
 
 type statusMsg struct {
-	Type string `json:"type"` // "status"
-	Status
+	Type    string `json:"type"` // "status"
+	Payload Status `json:"payload"`
 }
 
 func (h *Hub) Run(events <-chan any) {
@@ -105,8 +140,13 @@ func (h *Hub) Run(events <-chan any) {
 			// Greet with config plus the freshest snapshots we hold, so a
 			// new client paints a full UI on the first frames.
 			h.push(c, h.hello)
+			// Always sent, even when empty: it is the signal that ends the
+			// client's "hold live frames until the backfill lands" phase.
+			if b, err := json.Marshal(historyMsg{Type: "history", Payload: historyPayload{Trades: h.history}}); err == nil {
+				h.push(c, b)
+			}
 			if h.lastBook != nil || h.lastStats != nil {
-				if b, err := json.Marshal(updateMsg{Type: "update", Book: h.lastBook, Stats: h.lastStats}); err == nil {
+				if b, err := json.Marshal(updateMsg{Type: "update", Payload: updatePayload{Book: h.lastBook, Stats: h.lastStats}}); err == nil {
 					h.push(c, b)
 				}
 			}
@@ -130,6 +170,12 @@ func (h *Hub) Run(events <-chan any) {
 				if len(trades) > h.maxBatch { // keep the newest
 					trades = trades[len(trades)-h.maxBatch:]
 				}
+				h.history = append(h.history, m)
+				// Compact in slack, not on every trade: trimming one element
+				// per trade would copy the whole retained window each time.
+				if len(h.history) > h.historyMax+h.historyMax/4 {
+					h.history = append(h.history[:0], h.history[len(h.history)-h.historyMax:]...)
+				}
 			case Book:
 				book = &m
 				h.lastBook = book
@@ -138,10 +184,14 @@ func (h *Hub) Run(events <-chan any) {
 				stats = &m
 				h.lastStats = stats
 			case Fill:
-				if o := h.account.OnFill(m.ID, m.Price, m.Qty, m.Remaining, m.Ts); o != nil {
-					h.notify("info", fmt.Sprintf("%s %s @ %s · filled %s%s",
-						sideWord(o.Side), fmtQty(m.Qty), fmtPx(m.Price),
-						fmtQty(o.Filled), leftNote(o)))
+				// One toast per order, not per fill. A single market order can
+				// cross a dozen levels, and a dozen toasts bury the panel they
+				// stack over. Partial progress is already live in the orders
+				// table, so only completion is worth interrupting for.
+				o := h.account.OnFill(m.ID, m.Price, m.Qty, m.Remaining, m.Ts)
+				if o != nil && m.Remaining == 0 {
+					h.notify("info", fmt.Sprintf("%s %s @ %s · complete",
+						sideWord(o.Side), fmtQty(o.Filled), fmtPx(o.AvgFill)))
 				}
 			case CancelEv:
 				h.account.OnCancel(m.ID, m.Remaining, m.Ts)
@@ -163,7 +213,7 @@ func (h *Hub) Run(events <-chan any) {
 				} else {
 					h.engineUp = true
 				}
-				b, _ := json.Marshal(statusMsg{Type: "status", Status: m})
+				b, _ := json.Marshal(statusMsg{Type: "status", Payload: m})
 				h.lastStatus = b
 				h.broadcast(b) // state changes are rare — push immediately
 			}
@@ -171,12 +221,12 @@ func (h *Hub) Run(events <-chan any) {
 		case <-tick.C:
 			structDirty, pnlDirty := h.account.TakeDirty()
 			if structDirty || pnlDirty {
-				msg := accountMsg{Type: "account", Full: structDirty}
+				msg := accountMsg{Type: "account", Payload: accountPayload{Full: structDirty}}
 				if structDirty {
-					msg.Open, msg.Closed = h.account.SnapshotOrders()
+					msg.Payload.Open, msg.Payload.Closed = h.account.SnapshotOrders()
 				}
 				pnl := h.account.SnapshotPnl()
-				msg.Pnl = &pnl
+				msg.Payload.Pnl = &pnl
 				if b, err := json.Marshal(msg); err == nil {
 					h.broadcast(b)
 				}
@@ -184,7 +234,7 @@ func (h *Hub) Run(events <-chan any) {
 			if len(trades) == 0 && book == nil && stats == nil {
 				continue
 			}
-			if b, err := json.Marshal(updateMsg{Type: "update", Trades: trades, Book: book, Stats: stats}); err == nil {
+			if b, err := json.Marshal(updateMsg{Type: "update", Payload: updatePayload{Trades: trades, Book: book, Stats: stats}}); err == nil {
 				h.broadcast(b)
 			}
 			trades = trades[:0]
@@ -197,12 +247,12 @@ func (h *Hub) Run(events <-chan any) {
 func (h *Hub) fullAccount() []byte {
 	open, closed := h.account.SnapshotOrders()
 	pnl := h.account.SnapshotPnl()
-	b, _ := json.Marshal(accountMsg{Type: "account", Full: true, Open: open, Closed: closed, Pnl: &pnl})
+	b, _ := json.Marshal(accountMsg{Type: "account", Payload: accountPayload{Full: true, Open: open, Closed: closed, Pnl: &pnl}})
 	return b
 }
 
 func (h *Hub) notify(level, text string) {
-	if b, err := json.Marshal(noticeMsg{Type: "notice", Level: level, Text: text}); err == nil {
+	if b, err := json.Marshal(noticeMsg{Type: "notice", Payload: noticePayload{Level: level, Text: text}}); err == nil {
 		h.broadcast(b)
 	}
 }
@@ -212,13 +262,6 @@ func sideWord(s string) string {
 		return "BUY"
 	}
 	return "SELL"
-}
-
-func leftNote(o *AccountOrder) string {
-	if o.Remaining > 0 && o.Status == stLive {
-		return fmt.Sprintf(", %s resting", fmtQty(o.Remaining))
-	}
-	return ""
 }
 
 // Compact integer formatting for notifications (display scale lives in the
@@ -279,24 +322,24 @@ func (h *Hub) onClientMessage(c *wsClient, data []byte) {
 	switch r.Type {
 	case "order":
 		if !h.engineUp {
-			h.push(c, mustJSON(noticeMsg{Type: "notice", Level: "err",
-				Text: "engine disconnected — order not sent"}))
+			h.push(c, mustJSON(noticeMsg{Type: "notice", Payload: noticePayload{Level: "err",
+				Text: "engine disconnected — order not sent"}}))
 			return
 		}
 		_, wire, err := h.account.NewOrder(r.Side, r.Kind, r.Price, r.Qty, time.Now().UnixMilli())
 		if err != nil {
-			h.push(c, mustJSON(noticeMsg{Type: "notice", Level: "err", Text: err.Error()}))
+			h.push(c, mustJSON(noticeMsg{Type: "notice", Payload: noticePayload{Level: "err", Text: err.Error()}}))
 			return
 		}
 		select {
 		case h.engineIn <- wire:
 		default:
-			h.push(c, mustJSON(noticeMsg{Type: "notice", Level: "err", Text: "engine queue full"}))
+			h.push(c, mustJSON(noticeMsg{Type: "notice", Payload: noticePayload{Level: "err", Text: "engine queue full"}}))
 		}
 	case "cancel":
 		wire, err := h.account.Cancel(r.ID)
 		if err != nil {
-			h.push(c, mustJSON(noticeMsg{Type: "notice", Level: "err", Text: err.Error()}))
+			h.push(c, mustJSON(noticeMsg{Type: "notice", Payload: noticePayload{Level: "err", Text: err.Error()}}))
 			return
 		}
 		select {
@@ -306,7 +349,7 @@ func (h *Hub) onClientMessage(c *wsClient, data []byte) {
 	case "reduce":
 		wire, err := h.account.Reduce(r.ID, r.Qty)
 		if err != nil {
-			h.push(c, mustJSON(noticeMsg{Type: "notice", Level: "err", Text: err.Error()}))
+			h.push(c, mustJSON(noticeMsg{Type: "notice", Payload: noticePayload{Level: "err", Text: err.Error()}}))
 			return
 		}
 		select {

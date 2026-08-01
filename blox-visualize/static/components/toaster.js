@@ -6,7 +6,9 @@
 //   toaster.show('warn', 'order rejected');
 
 export class Toaster {
-  constructor(root, { max = 5, durationMs = 4200 } = {}) {
+  // Three at a time: the stack sits over a panel, and a burst that fills the
+  // screen hides the thing the notification is telling you about.
+  constructor(root, { max = 3, durationMs = 4200 } = {}) {
     this.root = root;
     this.max = max;
     this.durationMs = durationMs;

@@ -16,162 +16,37 @@
     <span class="sim-badge" title="Synthetic market — blox-sim agents, not real flow">SIM</span>
     <span class="star" title="It's a demo instrument. It loves you back.">☆</span>
   </div>
-  <div class="stat">
-    <label>Last price</label>
-    <span id="h-last" class="big mono">—</span>
-  </div>
-  <div class="stat">
-    <label>Change</label>
-    <span id="h-change" class="mono">—</span>
-  </div>
-  <div class="stat">
-    <label>High</label>
-    <span id="h-high" class="mono">—</span>
-  </div>
-  <div class="stat">
-    <label>Low</label>
-    <span id="h-low" class="mono">—</span>
-  </div>
-  <div class="stat">
-    <label>Volume</label>
-    <span id="h-vol" class="mono">—</span>
-  </div>
-  <div class="stat">
-    <label>Spread</label>
-    <span id="h-spread" class="mono">—</span>
-  </div>
-  <div class="stat">
-    <label>Engine</label>
-    <span id="h-engine" class="mono">—</span>
-  </div>
+  <div class="stat"><label>Last price</label><span id="h-last" class="big mono">—</span></div>
+  <div class="stat"><label>Change</label><span id="h-change" class="mono">—</span></div>
+  <div class="stat"><label>High</label><span id="h-high" class="mono">—</span></div>
+  <div class="stat"><label>Low</label><span id="h-low" class="mono">—</span></div>
+  <div class="stat"><label>Volume</label><span id="h-vol" class="mono">—</span></div>
+  <div class="stat"><label>Spread</label><span id="h-spread" class="mono">—</span></div>
+  <div class="stat"><label>Engine</label><span id="h-engine" class="mono">—</span></div>
   <div class="spacer"></div>
-  <div id="conn" class="conn"><span class="dot"></span><span id="conn-text">connecting</span></div>
+  <div class="header-tools">
+    <button id="snap-toggle" class="hdr-btn on" aria-pressed="true"
+      title="Magnetic edges — panels snap to each other and to the canvas (hold Alt to override)">
+      <span aria-hidden="true">🧲</span> Snap
+    </button>
+    <button id="lock-toggle" class="hdr-btn" aria-pressed="false"
+      title="Lock the layout so panels can't be moved or resized by accident">
+      <span aria-hidden="true">🔓</span> Unlocked
+    </button>
+    <div id="conn" class="conn"><span class="dot"></span><span id="conn-text">connecting</span></div>
+  </div>
 </header>
 
-<main id="grid">
-
-  <section class="panel" id="p-chart">
-    <header class="panel-head">
-      <span class="panel-title on">Market chart</span>
-      <div class="tf-group" id="tf-group">
-        <button data-tf="1" class="on">1s</button>
-        <button data-tf="5">5s</button>
-        <button data-tf="15">15s</button>
-        <button data-tf="60">1m</button>
-        <button data-tf="300">5m</button>
-      </div>
-      <span class="spacer"></span>
-      <span class="ohlc mono" id="ohlc"></span>
-    </header>
-    <div class="panel-body chart-wrap" id="chart"></div>
-  </section>
-
-  <div class="split"></div>
-
-  <section class="panel" id="p-trades">
-    <header class="panel-head"><span class="panel-title on">Market trades</span><span class="spacer"></span><span class="muted mono" id="trades-rate"></span></header>
-    <div class="cols mono muted"><span>Price</span><span class="r">Qty</span><span class="r">Time</span></div>
-    <div class="panel-body rows" id="trades"></div>
-  </section>
-
-  <div class="split"></div>
-
-  <section class="panel" id="p-depth">
-    <header class="panel-head"><span class="panel-title on">Depth chart</span><span class="spacer"></span><span class="mono" id="depth-spread"></span></header>
-    <div class="panel-body" id="depth-wrap">
-      <canvas id="depth"></canvas>
-      <div id="depth-tip" class="tip mono"></div>
-    </div>
-  </section>
-
-  <div class="split"></div>
-
-  <section class="panel" id="p-book">
-    <header class="panel-head"><span class="panel-title on">Order book</span><span class="spacer"></span><span class="muted mono" id="book-depth"></span></header>
-    <div class="cols mono muted ob-cols"><span>Bids</span><span>Price</span><span class="r">Asks</span></div>
-    <div class="panel-body ob">
-      <div id="book-asks" class="ob-side"></div>
-      <div class="ob-spread mono" id="ob-spread">—</div>
-      <div id="book-bids" class="ob-side"></div>
-    </div>
-  </section>
-
+<!-- The canvas is a free-form workspace: static/components/portal.js drops
+     one absolutely-positioned <section class="portal-panel"> per registered
+     panel here, wires the drag/resize/collapse/maximise gestures on it, and
+     mounts the actual blox-visualize component into its .panel-body. -->
+<main id="canvas">
+  <div class="snap-guide v" id="guide-v" aria-hidden="true"></div>
+  <div class="snap-guide h" id="guide-h" aria-hidden="true"></div>
 </main>
 
-<div class="hsplit" id="hsplit"></div>
-
-<section id="bottom">
-
-  <div class="bpanel" id="p-entry">
-    <header class="panel-head"><span class="panel-title on">Order entry</span></header>
-    <div class="bbody oe">
-      <div class="oe-side">
-        <button id="oe-buy" class="on">BUY</button>
-        <button id="oe-sell">SELL</button>
-      </div>
-      <div class="oe-row">
-        <label>Type</label>
-        <select id="oe-kind" class="mono">
-          <option value="LIMIT">Limit</option>
-          <option value="MARKET">Market</option>
-          <option value="IOC">IOC</option>
-          <option value="FOK">FOK</option>
-          <option value="POST">Post-only</option>
-        </select>
-      </div>
-      <div class="oe-row">
-        <label>Price</label>
-        <input id="oe-price" class="mono" inputmode="decimal" autocomplete="off" spellcheck="false">
-      </div>
-      <div class="oe-quick">
-        <button data-q="bid">best bid</button>
-        <button data-q="mid">mid</button>
-        <button data-q="ask">best ask</button>
-      </div>
-      <div class="oe-row">
-        <label>Qty</label>
-        <input id="oe-qty" class="mono" inputmode="numeric" autocomplete="off" value="10">
-      </div>
-      <div class="oe-est mono muted">≈ <span id="oe-notional">—</span></div>
-      <button id="oe-submit" class="buy">BUY BLOX</button>
-    </div>
-  </div>
-
-  <div class="split"></div>
-
-  <div class="bpanel" id="p-open">
-    <header class="panel-head"><span class="panel-title on">Open orders</span><span class="spacer"></span><span class="muted mono" id="open-count"></span></header>
-    <div class="cols mono muted oc-grid"><span>Time</span><span>Side</span><span>Price</span><span class="r">Qty</span><span class="r">Filled</span><span>Type</span><span>ID</span><span></span></div>
-    <div class="bbody rows" id="open-rows"><div class="empty muted">no working orders — place one on the left</div></div>
-  </div>
-
-  <div class="split"></div>
-
-  <div class="bpanel" id="p-closed">
-    <header class="panel-head"><span class="panel-title on">Closed orders</span></header>
-    <div class="cols mono muted oc-grid-cl"><span>Time</span><span>Side</span><span>Avg px</span><span class="r">Filled</span><span>Status</span><span>ID</span></div>
-    <div class="bbody rows" id="closed-rows"><div class="empty muted">nothing yet</div></div>
-  </div>
-
-  <div class="split"></div>
-
-  <div class="bpanel" id="p-pnl">
-    <header class="panel-head"><span class="panel-title on">Live PnL</span><span class="spacer"></span><span class="muted mono" id="pnl-fills"></span></header>
-    <div class="bbody pnl">
-      <div class="pnl-total mono" id="pnl-total">+$0.00</div>
-      <div class="pnl-grid mono">
-        <span class="muted">Realized</span><span id="pnl-realized" class="r">—</span>
-        <span class="muted">Unrealized</span><span id="pnl-unreal" class="r">—</span>
-        <span class="muted">Position</span><span id="pnl-pos" class="r">—</span>
-        <span class="muted">Avg open</span><span id="pnl-avg" class="r">—</span>
-        <span class="muted">Mark</span><span id="pnl-mark" class="r">—</span>
-        <span class="muted">Volume</span><span id="pnl-vol" class="r">—</span>
-      </div>
-      <canvas id="pnl-spark"></canvas>
-    </div>
-  </div>
-
-</section>
+<div id="dock" role="toolbar" aria-label="Panels"></div>
 
 <div id="toasts"></div>
 

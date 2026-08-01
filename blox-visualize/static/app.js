@@ -1,49 +1,26 @@
 'use strict';
-// blox-visualize — front end. One WebSocket, panels wired from
-// static/components/*.js. This file is page-specific glue: DOM lookups,
-// message routing, header/footer text, and the resizable layout — not
-// reusable, unlike the components it imports.
+// blox-visualize — front end. Page-specific glue only: it mounts panels from
+// the blox-visualize library into the page's shells, keeps the topbar and
+// status bar in sync, and owns the resizable layout. Everything that draws a
+// market lives in /lib and is published as an npm package — this file is the
+// demo host, not a component.
 
-import { fmtQty, fmtTime, fmtTimeShort, createPriceFormat } from './components/format.js';
-import { DepthChart } from './components/depth-chart.js';
-import { OrderBookPanel } from './components/order-book.js';
-import { TradesPanel } from './components/trades-panel.js';
-import { MarketChart } from './components/market-chart.js';
-import { OrderEntryForm } from './components/order-entry.js';
-import { AccountOrdersPanel } from './components/account-panel.js';
-import { PnlPanel } from './components/pnl-panel.js';
+import {
+  FeedAdapter, createPriceFormat, fmtQty,
+  MarketChart, OrderBook, Depth, Trades, OrderEntry, Orders, PnlPanel,
+} from './lib/index.js';
 import { Toaster } from './components/toaster.js';
+import { Portal } from './components/portal.js';
 
 (() => {
 
 const $ = id => document.getElementById(id);
-const el = {
-  last: $('h-last'), change: $('h-change'), high: $('h-high'), low: $('h-low'),
-  vol: $('h-vol'), spread: $('h-spread'), engine: $('h-engine'),
-  conn: $('conn'), connText: $('conn-text'),
-  instName: $('inst-name'),
-  ohlc: $('ohlc'), trades: $('trades'), tradesRate: $('trades-rate'),
-  chart: $('chart'), tfGroup: $('tf-group'),
-  depth: $('depth'), depthTip: $('depth-tip'), depthSpread: $('depth-spread'),
-  bookAsks: $('book-asks'), bookBids: $('book-bids'), obSpread: $('ob-spread'),
-  bookDepth: $('book-depth'),
-  fStatus: $('f-status'), fEngine: $('f-engine'),
-  openRows: $('open-rows'), closedRows: $('closed-rows'), openCount: $('open-count'),
-  pnlTotal: $('pnl-total'), pnlRealized: $('pnl-realized'), pnlUnreal: $('pnl-unreal'),
-  pnlPos: $('pnl-pos'), pnlAvg: $('pnl-avg'), pnlMark: $('pnl-mark'),
-  pnlVol: $('pnl-vol'), pnlFills: $('pnl-fills'), pnlSpark: $('pnl-spark'),
-  oeBuy: $('oe-buy'), oeSell: $('oe-sell'), oeKind: $('oe-kind'),
-  oePrice: $('oe-price'), oeQty: $('oe-qty'), oeNotional: $('oe-notional'),
-  oeSubmit: $('oe-submit'),
-  toasts: $('toasts'),
-};
 
-let CFG = { name: 'BLOX/USD', instrument: 1, priceScale: 2, server: '' };
-// ponytail: priceScale is read once at boot and baked into every panel's
-// formatters. Fine as long as an instrument's scale never changes mid-session
-// (true today — it's fixed server-side). If that changes, rebuild `fmt` and
-// the components that hold it on each 'hello' instead.
-const fmt = createPriceFormat(CFG.priceScale);
+let CFG = { instrument: 'BLOX/USD', instrumentId: 1, priceScale: 2, server: '' };
+// ponytail: priceScale is read from hello once and baked into every panel's
+// formatter. An instrument's scale is fixed server-side, so this holds; if it
+// ever changes mid-session, rebuild `fmt` and remount the panels.
+let fmt = createPriceFormat(CFG.priceScale);
 
 const S = {
   book: { bids: [], asks: [] },
@@ -52,150 +29,156 @@ const S = {
   connected: false, engineUp: false,
 };
 
+const toaster = new Toaster($('toasts'));
+const feed = new FeedAdapter(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+
 // ---------------------------------------------------------------- panels
+//
+// Each panel is mounted into a portal-managed body/chrome pair instead of a
+// fixed div from index.html — that's what makes it a freely draggable and
+// resizable window rather than a cell in a static grid. The panel classes
+// themselves don't know the difference: they still just get a host element
+// and an optional status slot.
 
-const toaster = new Toaster(el.toasts);
+const portal = new Portal({
+  canvas: $('canvas'),
+  guideV: $('guide-v'),
+  guideH: $('guide-h'),
+  dock: $('dock'),
+});
 
-const depthChart = new DepthChart(el.depth, el.depthTip, { fmtPx: fmt.fmtPx, fmtQty });
+let chart, book, depth, trades, entry, orders, pnl;
 
-const orderBook = new OrderBookPanel(
-  { asksEl: el.bookAsks, bidsEl: el.bookBids, spreadEl: el.obSpread, depthCountEl: el.bookDepth },
-  { fmtPx: fmt.fmtPx, fmtQty },
-);
-
-const trades = new TradesPanel(el.trades, el.tradesRate, { fmtPx: fmt.fmtPx, fmtQty, fmtTime });
-
-const chart = new MarketChart(el.chart, el.tfGroup, el.ohlc, { priceDiv: fmt.div, priceDecimals: fmt.dec });
-
-const entry = new OrderEntryForm(
-  {
-    buyBtn: el.oeBuy, sellBtn: el.oeSell, kindSelect: el.oeKind,
-    priceInput: el.oePrice, qtyInput: el.oeQty, notionalEl: el.oeNotional, submitBtn: el.oeSubmit,
-    quickBtns: [...document.querySelectorAll('.oe-quick button')],
-  },
-  {
-    fmtPx: fmt.fmtPx, parsePrice: fmt.parsePrice, fmtMoney: fmt.fmtMoney,
-    symbol: CFG.name.split('/')[0],
+portal.register('chart', (body, chrome) => {
+  chart = new MarketChart(body, { fmt, statusEl: chrome });
+});
+portal.register('trades', (body, chrome) => {
+  trades = new Trades(body, { fmt, statusEl: chrome });
+});
+portal.register('depth', (body, chrome) => {
+  depth = new Depth(body, { fmt, statusEl: chrome });
+});
+portal.register('book', (body, chrome) => {
+  book = new OrderBook(body, { fmt, statusEl: chrome });
+});
+portal.register('entry', (body) => {
+  entry = new OrderEntry(body, {
+    fmt,
+    symbol: CFG.instrument.split('/')[0],
     getBook: () => S.book,
-    onSubmit: order => sendJson({ type: 'order', ...order }),
+    onSubmit: o => feed.send({ type: 'order', ...o }),
+  });
+});
+portal.register('orders', (body, chrome) => {
+  orders = new Orders(body, {
+    fmt,
+    statusEl: chrome,
+    onCancel: id => feed.send({ type: 'cancel', id }),
+    onReduce: (id, qty) => feed.send({ type: 'reduce', id, qty }),
+  });
+});
+portal.register('pnl', (body, chrome) => {
+  pnl = new PnlPanel(body, { fmt, statusEl: chrome });
+});
+
+portal.start();
+
+// ---------------------------------------------------------------- feed
+
+feed.subscribe({
+  onHello(h) {
+    CFG = h;
+    $('inst-name').textContent = h.instrument;
+    document.title = `${h.instrument} · blox-visualize`;
+    scheduleFooter();
   },
-);
 
-const account = new AccountOrdersPanel(
-  { openRowsEl: el.openRows, closedRowsEl: el.closedRows, openCountEl: el.openCount },
-  {
-    fmtPx: fmt.fmtPx, fmtQty, fmtTimeShort,
-    onCancel: id => sendJson({ type: 'cancel', id }),
-    onReduce: (id, qty) => sendJson({ type: 'reduce', id, qty }),
-  },
-);
-
-const pnl = new PnlPanel(
-  {
-    totalEl: el.pnlTotal, realizedEl: el.pnlRealized, unrealEl: el.pnlUnreal,
-    posEl: el.pnlPos, avgEl: el.pnlAvg, markEl: el.pnlMark, volEl: el.pnlVol, fillsEl: el.pnlFills,
-  },
-  el.pnlSpark,
-  { fmtMoney: fmt.fmtMoney, fmtPx: fmt.fmtPx, fmtQty },
-);
-
-// ---------------------------------------------------------------- websocket
-
-let sock = null;
-let backoff = 500;
-function connect() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/ws`);
-  sock = ws;
-  ws.onopen = () => { backoff = 500; setConn(true); };
-  ws.onclose = () => {
-    sock = null;
-    setConn(false);
-    setTimeout(connect, backoff);
-    backoff = Math.min(backoff * 2, 5000);
-  };
-  ws.onerror = () => {};
-  ws.onmessage = e => route(JSON.parse(e.data));
-}
-
-function sendJson(o) {
-  if (sock && sock.readyState === WebSocket.OPEN) sock.send(JSON.stringify(o));
-}
-
-function route(m) {
-  switch (m.type) {
-    case 'hello': onHello(m); break;
-    case 'update': onUpdate(m); break;
-    case 'status': onStatus(m); break;
-    case 'account': onAccount(m); break;
-    case 'notice': toaster.show(m.level, m.text); break;
-  }
-}
-
-function onHello(m) {
-  CFG = m;
-  el.instName.textContent = m.name;
-  document.title = `${m.name} · blox-visualize`;
-  // A fresh hello means a fresh bridge: state from before is fiction.
-  chart.reset();
-  trades.clear();
-  Object.assign(S, { last: null, prev: null, first: null, high: null, low: null, vol: 0 });
-  if (m.book || m.stats) onUpdate({ book: m.book, stats: m.stats });
-}
-
-function onUpdate(m) {
-  if (m.book) {
-    S.book = m.book;
-    orderBook.update(m.book);
-    depthChart.render(m.book);
-    el.depthSpread.textContent = depthChart.spreadText();
-    entry.maybePrefillFromBook(m.book);
+  // The backfill. Panels get it in bulk so the chart has bars on the longer
+  // timeframes before a single live tick arrives.
+  onHistory(list) {
+    for (const t of list) trackTrade(t);
+    chart.seed(list);
+    trades.seed(list);
     scheduleHeader();
-  }
-  if (m.trades) {
-    for (const t of m.trades) onTrade(t);
+  },
+
+  onTrade(t) {
+    trackTrade(t);
+    chart.addTrade(t);
+    trades.push(t);
     scheduleHeader();
-  }
-  if (m.stats) {
+  },
+
+  onBook(b) {
+    S.book = b;
+    book.update(b);
+    depth.update(b);
+    entry.update(b);
+    scheduleHeader();
+  },
+
+  // `full` is the whole account, so the lists are replaced wholesale — empty
+  // ones included. Testing `a.open` instead would strand the last order's
+  // dashed line on the chart: omitempty means "no orders" arrives as nothing
+  // at all, not as an empty array.
+  onAccount(a) {
+    if (a.full) {
+      const open = a.open || [], closed = a.closed || [];
+      orders.update({ open, closed });
+      chart.setOrders(open);
+      chart.setFills(closed
+        .filter(o => o.filled > 0)
+        .map(o => ({ ts: o.tsEnd || o.ts, price: o.avgFill, side: o.side })));
+    }
+    if (a.pnl) pnl.update(a.pnl);
+  },
+
+  onStats(s) {
     S.statsPrev = S.stats;
-    S.stats = m.stats;
+    S.stats = s;
     if (S.statsPrev) {
-      const dt = (m.stats.ts - S.statsPrev.ts) / 1000;
-      if (dt > 0) S.evs = (m.stats.applied - S.statsPrev.applied) / dt;
+      const dt = (s.ts - S.statsPrev.ts) / 1000;
+      if (dt > 0) S.evs = (s.applied - S.statsPrev.applied) / dt;
     }
     scheduleHeader();
     scheduleFooter();
-  }
-}
+  },
 
-function onTrade(t) {
+  onEngineStatus(s) {
+    S.engineUp = s.state === 'up';
+    scheduleFooter();
+  },
+
+  onNotice(n) { toaster.show(n.level, n.text); },
+
+  // A reconnect means the bridge restarted: everything before it is fiction.
+  onReset() {
+    Object.assign(S, { last: null, prev: null, first: null, high: null, low: null, vol: 0 });
+    scheduleHeader();
+  },
+
+  onConnection(state) {
+    S.connected = state === 'live';
+    $('conn').className = 'conn ' + (S.connected ? 'ok' : 'bad');
+    $('conn-text').textContent = S.connected ? 'connected' : 'disconnected';
+    scheduleFooter();
+  },
+});
+
+function trackTrade(t) {
   S.prev = S.last;
   S.last = t.price;
   if (S.first == null) S.first = t.price;
   S.high = S.high == null ? t.price : Math.max(S.high, t.price);
   S.low = S.low == null ? t.price : Math.min(S.low, t.price);
   S.vol += t.qty;
-  chart.addTrade(t);
-  trades.push(t);
-}
-
-function onStatus(m) {
-  S.engineUp = m.state === 'up';
-  scheduleFooter();
-}
-
-function onAccount(m) {
-  if (m.full) {
-    account.setOpen(m.open || []);
-    account.setClosed(m.closed || []);
-  }
-  if (m.pnl) pnl.update(m.pnl);
 }
 
 // ---------------------------------------------------------------- header & footer
 //
 // Coalesced to one repaint per animation frame — book/trade/stats messages
-// can arrive far faster than the DOM needs to redraw.
+// arrive far faster than the DOM needs to redraw, and a backfill replays
+// thousands of trades in one go.
 
 function batched(fn) {
   let scheduled = false;
@@ -208,32 +191,31 @@ function batched(fn) {
 
 function updateHeader() {
   if (S.last != null) {
-    el.last.textContent = fmt.fmtPx(S.last);
+    const last = $('h-last');
+    last.textContent = fmt.fmtPx(S.last);
     const dir = S.prev == null ? 0 : Math.sign(S.last - S.prev);
-    el.last.className = 'big mono ' + (dir > 0 ? 'up' : dir < 0 ? 'down' : '');
+    last.className = 'big mono ' + (dir > 0 ? 'up' : dir < 0 ? 'down' : '');
     if (S.first) {
       const d = S.last - S.first;
-      const pct = d / S.first * 100;
-      el.change.textContent = `${d >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
-      el.change.className = 'mono ' + (d >= 0 ? 'up' : 'down');
+      const change = $('h-change');
+      change.textContent = `${d >= 0 ? '+' : ''}${(d / S.first * 100).toFixed(2)}%`;
+      change.className = 'mono ' + (d >= 0 ? 'up' : 'down');
     }
-    el.high.textContent = fmt.fmtPx(S.high);
-    el.low.textContent = fmt.fmtPx(S.low);
-    el.vol.textContent = fmtQty(S.vol);
+    $('h-high').textContent = fmt.fmtPx(S.high);
+    $('h-low').textContent = fmt.fmtPx(S.low);
+    $('h-vol').textContent = fmtQty(S.vol);
   }
   const bb = S.book.bids[0], ba = S.book.asks[0];
   if (bb && ba) {
     const sp = ba[0] - bb[0];
     const mid = (ba[0] + bb[0]) / 2;
-    el.spread.textContent = `${fmt.fmtPx(sp)} (${(sp / mid * 100).toFixed(3)}%)`;
+    $('h-spread').textContent = `${fmt.fmtPx(sp)} (${(sp / mid * 100).toFixed(3)}%)`;
   }
-  if (S.stats) {
-    el.engine.textContent = `${S.evs.toFixed(0)} ev/s · ${S.stats.conns} conn`;
-  }
+  if (S.stats) $('h-engine').textContent = `${S.evs.toFixed(0)} ev/s · ${S.stats.conns} conn`;
 }
 
 function updateFooter() {
-  const st = el.fStatus;
+  const st = $('f-status');
   if (!S.connected) {
     st.textContent = 'webSocket disconnected — reconnecting…';
     st.className = 'err';
@@ -241,11 +223,11 @@ function updateFooter() {
     st.textContent = 'engine disconnected — retrying…';
     st.className = 'warn';
   } else {
-    st.textContent = `live · ${CFG.name} · instrument ${CFG.instrument} · synthetic market`;
+    st.textContent = `live · ${CFG.instrument} · instrument ${CFG.instrumentId} · synthetic market`;
     st.className = 'ok';
   }
   if (S.stats) {
-    el.fEngine.textContent =
+    $('f-engine').textContent =
       `engine ${CFG.server} · applied ${fmtQty(S.stats.applied)} · books ${S.stats.books} · errors ${S.stats.errors}`;
   }
 }
@@ -253,73 +235,26 @@ function updateFooter() {
 const scheduleHeader = batched(updateHeader);
 const scheduleFooter = batched(updateFooter);
 
-function setConn(ok) {
-  S.connected = ok;
-  el.conn.className = 'conn ' + (ok ? 'ok' : 'bad');
-  el.connText.textContent = ok ? 'connected' : 'disconnected';
-  scheduleFooter();
-}
+// ---------------------------------------------------------------- portal toggles
 
-// ---------------------------------------------------------------- layout splitters
+$('snap-toggle').addEventListener('click', () => {
+  const on = !portal.snapOn;
+  portal.setSnap(on);
+  $('snap-toggle').classList.toggle('on', on);
+  $('snap-toggle').setAttribute('aria-pressed', String(on));
+});
 
-function initHsplit() {
-  const split = $('hsplit');
-  const bottom = $('bottom');
-  split.addEventListener('mousedown', e => {
-    const startY = e.clientY, startH = bottom.offsetHeight;
-    split.classList.add('drag');
-    const move = ev => {
-      const hpx = Math.max(140, Math.min(window.innerHeight - 260, startH - (ev.clientY - startY)));
-      bottom.style.flex = `0 0 ${hpx}px`;
-    };
-    const up = () => {
-      split.classList.remove('drag');
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
-    };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-    e.preventDefault();
-  });
-}
-
-const LAYOUT_KEY = 'blox-viz-layout-v1';
-
-function initSplitters() {
-  const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null');
-  if (saved) {
-    const panels = [...document.querySelectorAll('#grid .panel')];
-    panels.forEach((p, i) => { if (saved[i]) p.style.flex = `0 0 ${saved[i]}px`; });
-  }
-  document.querySelectorAll('.split').forEach(split => {
-    split.addEventListener('mousedown', e => {
-      const prev = split.previousElementSibling, next = split.nextElementSibling;
-      const startX = e.clientX, pw = prev.offsetWidth, nw = next.offsetWidth;
-      split.classList.add('drag');
-      const move = ev => {
-        const dx = ev.clientX - startX;
-        const a = Math.max(170, pw + dx), b = Math.max(170, nw - dx);
-        prev.style.flex = `0 0 ${a}px`;
-        next.style.flex = `0 0 ${b}px`;
-      };
-      const up = () => {
-        split.classList.remove('drag');
-        window.removeEventListener('mousemove', move);
-        window.removeEventListener('mouseup', up);
-        const widths = [...document.querySelectorAll('#grid .panel')].map(p => p.offsetWidth);
-        localStorage.setItem(LAYOUT_KEY, JSON.stringify(widths));
-      };
-      window.addEventListener('mousemove', move);
-      window.addEventListener('mouseup', up);
-      e.preventDefault();
-    });
-  });
-}
+$('lock-toggle').addEventListener('click', () => {
+  const on = !portal.locked;
+  portal.setLocked(on);
+  const btn = $('lock-toggle');
+  btn.classList.toggle('on', on);
+  btn.setAttribute('aria-pressed', String(on));
+  btn.innerHTML = on ? '<span aria-hidden="true">🔒</span> Locked' : '<span aria-hidden="true">🔓</span> Unlocked';
+});
 
 // ---------------------------------------------------------------- boot
 
-initSplitters();
-initHsplit();
-connect();
+feed.connect();
 
 })();

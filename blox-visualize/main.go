@@ -46,6 +46,7 @@ func main() {
 		bookEvery  = flag.Duration("book-every", 100*time.Millisecond, "book poll interval")
 		name       = flag.String("name", "BLOX/USD", "display name of the instrument")
 		priceScale = flag.Int("price-scale", 2, "display decimals for prices")
+		history    = flag.Int("history", 50000, "trades retained and replayed to each new client")
 		staticDir  = flag.String("static-dir", "", "serve the UI from this directory instead of the embedded copy (development)")
 	)
 	flag.Parse()
@@ -98,7 +99,7 @@ func main() {
 	}
 	go eng.Run(ctx)
 
-	hub := NewHub(*name, *instrument, *priceScale, target, NewAccount(*instrument), engineIn)
+	hub := NewHub(*name, *instrument, *priceScale, *history, target, NewAccount(*instrument), engineIn)
 	go hub.Run(events)
 
 	mux := http.NewServeMux()
