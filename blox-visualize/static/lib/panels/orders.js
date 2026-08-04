@@ -4,6 +4,15 @@ import { fmtQty, fmtTimeShort } from "../format.js";
 import { mount, q } from "../dom.js";
 const shortId = (id) => "#" + String(id).slice(-4);
 const prettyReason = (r) => !r ? "" : " · " + r.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+/**
+ * Working and closed orders, in two independently resizable tables (drag
+ * the bar between them). Cancel and reduce-qty are wired to `onCancel` /
+ * `onReduce` from `opts`.
+ *
+ * `new Orders(host, opts)`, then `update({ open, closed })` — pass both
+ * arrays even when one is empty; a field left `undefined` is "unchanged",
+ * not "cleared". `destroy()` when done.
+ */
 export class Orders {
     openEl;
     closedEl;
@@ -46,6 +55,7 @@ export class Orders {
                 this.revertReduceEdit();
         }, { signal });
     }
+    /** Replace `open` and/or `closed` wholesale. Omit a field to leave it as-is. */
     update(a) {
         if (a.open) {
             this.open = a.open;
@@ -56,10 +66,12 @@ export class Orders {
             this.renderClosed();
         }
     }
+    /** Clear both tables — a reconnect, since the old lists may be stale. */
     reset() {
         this.reduceEdit = null;
         this.update({ open: [], closed: [] });
     }
+    /** Tear down this panel's listeners. */
     destroy() {
         this.ac.abort();
     }

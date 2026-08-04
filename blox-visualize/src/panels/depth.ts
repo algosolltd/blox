@@ -16,6 +16,12 @@ export type DepthOptions = PanelChrome & {
   maxRangePct?: number;
 };
 
+/**
+ * Cumulative depth curve on a canvas, with a hover readout.
+ *
+ * `new Depth(host, opts)`, then `update(book)` on every book snapshot.
+ * `destroy()` disconnects the resize observer and cancels the pending frame.
+ */
 export class Depth {
   private readonly cv: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -65,12 +71,14 @@ export class Depth {
     this.resize();
   }
 
+  /** A fresh book snapshot. Frame-batched — cheap to call on every tick. */
   update(book: Book): void {
     this.book = book;
     if (this.statusEl) this.statusEl.textContent = this.spreadText();
     if (!this.raf) this.raf = requestAnimationFrame(this.frame);
   }
 
+  /** Clear to an empty book — a reconnect, since the old one may be stale. */
   reset(): void {
     this.update({ bids: [], asks: [] });
   }
@@ -81,6 +89,7 @@ export class Depth {
     if (this.raf) cancelAnimationFrame(this.raf);
   }
 
+  /** `"<spread> · <spread%>"`, or `""` with no two-sided book. */
   spreadText(): string {
     const bb = this.book.bids[0], ba = this.book.asks[0];
     if (!bb || !ba) return "";

@@ -26,6 +26,15 @@ export const TF_LABEL = {
 const DEFAULT_TFS = [1, 5, 15, MIN, 5 * MIN, 15 * MIN, HOUR, 4 * HOUR, DAY];
 const UP = "#00ff88", DOWN = "#ff3d57";
 const DASHED = 2; // LightweightCharts LineStyle.Dashed
+/**
+ * Candlestick + volume chart, with your live position's VWAP, working
+ * orders as dashed price lines, and a dot on every fill.
+ *
+ * `new MarketChart(host, opts)`, then `seed(trades)` for backfill and
+ * `addTrade(t)` per live tick. `setOrders`, `setFills`/`addFill` and
+ * `setAvg` are optional and independent of the trade stream. `destroy()`
+ * tears down the chart and its listeners.
+ */
 export class MarketChart {
     chartEl;
     tfEl;
@@ -55,6 +64,11 @@ export class MarketChart {
     fills = [];
     orders = [];
     priceLines = [];
+    // Wall-clock seconds when the current position was opened. Null while flat.
+    // The VWAP line starts here — candles before it stay null, so a fresh open
+    // draws a fresh line instead of stretching back across pre-open history.
+    // Captured on the null→open transition in `setAvg`; cleared on flatten.
+    posOpenedAt = null;
     constructor(host, opts) {
         this.fmt = opts.fmt;
         this.tfList = opts.tfList ?? DEFAULT_TFS;
@@ -156,6 +170,7 @@ export class MarketChart {
         }
         this.repaint();
     }
+    /** One live trade. */
     addTrade(t) {
         for (const tf of this.tfList)
             this.addCandle(tf, t);
@@ -170,6 +185,7 @@ export class MarketChart {
         this.fills = fills.length > this.maxFills ? fills.slice(-this.maxFills) : fills;
         this.drawMarkers();
     }
+    /** One live fill, appended to what `setFills` already holds. */
     addFill(f) {
         this.fills.push(f);
         if (this.fills.length > this.maxFills)
@@ -178,24 +194,44 @@ export class MarketChart {
     }
     /** Your position's average open price, in ticks. 0/null means flat. */
     setAvg(avg) {
-        this.posAvg = avg || null;
-        // The latest bucket in every timeframe represents "now" — nudge it
-        // straight away instead of waiting for the next market trade to redraw it.
-        for (const tf of this.tfList) {
-            const key = this.lastKey.get(tf);
-            const c = key === undefined ? undefined : this.candles.get(tf).get(key);
-            if (!c)
-                continue;
-            c.vwap = this.posAvg;
-            if (tf === this.tf)
+        const next = avg || null;
+        const opened = next !== null && this.posAvg === null;
+        const closed = next === null && this.posAvg !== null;
+        this.posAvg = next;
+        if (closed)
+            this.posOpenedAt = null;
+        else if (opened)
+            this.posOpenedAt = Math.floor(Date.now() / 1000);
+        // Re-stamp every candle: a fresh open must not paint VWAP across history,
+        // and a fresh close must clear it from every bucket. Any transition
+        // reshapes the line (it can vanish or appear from "now"), so push the
+        // whole visible series at once — `update` only ships a single point and
+        // leaves the chart holding the previous run's values, which would bridge
+        // straight across the flat gap.
+        if (opened || closed)
+            this.repaint();
+        else {
+            // Same position, just a fresh avg: the latest candle is the only one
+            // that visibly moves, so an `update` is enough.
+            for (const tf of this.tfList) {
+                const last = this.lastKey.get(tf);
+                if (last === undefined || tf !== this.tf)
+                    continue;
+                const c = this.candles.get(tf).get(last);
+                if (!c)
+                    continue;
+                c.vwap = this.vwapFor(c.time);
                 this.vwapSeries?.update(this.toVwapPoint(c));
+            }
         }
     }
+    /** Drop every candle, fill, order and VWAP point — a reconnect, since the past may no longer apply. */
     reset() {
         for (const m of this.candles.values())
             m.clear();
         this.lastKey.clear();
         this.posAvg = null;
+        this.posOpenedAt = null;
         this.fills = [];
         this.orders = [];
         if (this.candleSeries) {
@@ -207,6 +243,7 @@ export class MarketChart {
         }
         this.setOhlc(null);
     }
+    /** Switch the visible timeframe and repaint. */
     setTF(tf) {
         this.tf = tf;
         for (const b of this.tfEl.querySelectorAll("[data-tf]")) {
@@ -215,6 +252,7 @@ export class MarketChart {
         this.repaint();
         this.chart?.timeScale().scrollToRealTime();
     }
+    /** Tear down the chart and its listeners. */
     destroy() {
         this.destroyed = true;
         this.ac.abort();
@@ -294,7 +332,7 @@ export class MarketChart {
         const m = this.candles.get(tf);
         let c = m.get(key);
         if (!c) {
-            c = { time: key, open: t.price, high: t.price, low: t.price, close: t.price, vol: 0, vwap: this.posAvg };
+            c = { time: key, open: t.price, high: t.price, low: t.price, close: t.price, vol: 0, vwap: this.vwapFor(key) };
             m.set(key, c);
             if (m.size > this.maxCandles) {
                 const oldest = m.keys().next().value;
@@ -336,6 +374,12 @@ export class MarketChart {
     /** A value point, or a whitespace point (gap) while flat / avg unknown. */
     toVwapPoint(c) {
         return c.vwap == null ? { time: c.time } : { time: c.time, value: c.vwap / this.fmt.div };
+    }
+    /** VWAP for a candle at `key` (bucket seconds). Pre-open candles are null. */
+    vwapFor(key) {
+        if (this.posAvg === null || this.posOpenedAt === null)
+            return null;
+        return key >= this.posOpenedAt ? this.posAvg : null;
     }
     lastBarOhlc() {
         const key = this.lastKey.get(this.tf);

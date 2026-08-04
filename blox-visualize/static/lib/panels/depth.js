@@ -3,6 +3,12 @@
 // pointer-rate.
 import { fmtQty } from "../format.js";
 import { mount, q } from "../dom.js";
+/**
+ * Cumulative depth curve on a canvas, with a hover readout.
+ *
+ * `new Depth(host, opts)`, then `update(book)` on every book snapshot.
+ * `destroy()` disconnects the resize observer and cancels the pending frame.
+ */
 export class Depth {
     cv;
     ctx;
@@ -47,6 +53,7 @@ export class Depth {
         this.ro.observe(this.wrap);
         this.resize();
     }
+    /** A fresh book snapshot. Frame-batched — cheap to call on every tick. */
     update(book) {
         this.book = book;
         if (this.statusEl)
@@ -54,6 +61,7 @@ export class Depth {
         if (!this.raf)
             this.raf = requestAnimationFrame(this.frame);
     }
+    /** Clear to an empty book — a reconnect, since the old one may be stale. */
     reset() {
         this.update({ bids: [], asks: [] });
     }
@@ -63,6 +71,7 @@ export class Depth {
         if (this.raf)
             cancelAnimationFrame(this.raf);
     }
+    /** `"<spread> · <spread%>"`, or `""` with no two-sided book. */
     spreadText() {
         const bb = this.book.bids[0], ba = this.book.asks[0];
         if (!bb || !ba)

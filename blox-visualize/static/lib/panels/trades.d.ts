@@ -8,6 +8,13 @@ export type TradesOptions = PanelChrome & {
     /** Rows built from a single flush — a burst never renders more than this. */
     renderMax?: number;
 };
+/**
+ * Time & sales tape, with a trade-rate readout and your own fills
+ * highlighted (`TradeTick.mine`).
+ *
+ * `new Trades(host, opts)`, then `seed(trades)` for backfill and `push(t)`
+ * per live trade. `destroy()` when done.
+ */
 export declare class Trades {
     private readonly listEl;
     private readonly statusEl;
@@ -18,10 +25,13 @@ export declare class Trades {
     private times;
     private raf;
     constructor(host: HTMLElement, opts: TradesOptions);
+    /** One live trade. */
     push(t: TradeTick): void;
     /** Bulk backfill, oldest first. */
     seed(trades: TradeTick[]): void;
+    /** Clear the tape — a reconnect, since the old trades may be stale. */
     reset(): void;
+    /** Cancel the pending frame. */
     destroy(): void;
     private schedule;
     private frame;

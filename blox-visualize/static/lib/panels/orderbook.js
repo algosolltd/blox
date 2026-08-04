@@ -2,6 +2,12 @@
 // is resized — a book update rewrites text and a bar transform, never DOM.
 import { fmtQty } from "../format.js";
 import { mount, q } from "../dom.js";
+/**
+ * Two-sided order book ladder with depth bars.
+ *
+ * `new OrderBook(host, opts)`, then `update(book)` on every snapshot.
+ * `destroy()` disconnects the resize observer and cancels the pending frame.
+ */
 export class OrderBook {
     asksEl;
     bidsEl;
@@ -32,11 +38,13 @@ export class OrderBook {
         this.ro = new ResizeObserver(() => this.buildRows());
         this.ro.observe(this.obEl);
     }
+    /** A fresh book snapshot. Frame-batched — cheap to call on every tick. */
     update(book) {
         this.book = book;
         if (!this.raf)
             this.raf = requestAnimationFrame(this.frame);
     }
+    /** Clear to an empty book — a reconnect, since the old one may be stale. */
     reset() {
         this.update({ bids: [], asks: [] });
     }

@@ -14,6 +14,13 @@ export type TradesOptions = PanelChrome & {
   renderMax?: number;
 };
 
+/**
+ * Time & sales tape, with a trade-rate readout and your own fills
+ * highlighted (`TradeTick.mine`).
+ *
+ * `new Trades(host, opts)`, then `seed(trades)` for backfill and `push(t)`
+ * per live trade. `destroy()` when done.
+ */
 export class Trades {
   private readonly listEl: HTMLElement;
   private readonly statusEl: HTMLElement | null;
@@ -35,6 +42,7 @@ export class Trades {
     this.listEl = q(host, ".rows");
   }
 
+  /** One live trade. */
   push(t: TradeTick): void {
     this.buf.push(t);
     this.times.push(t.ts);
@@ -46,6 +54,7 @@ export class Trades {
     for (const t of trades) this.push(t);
   }
 
+  /** Clear the tape — a reconnect, since the old trades may be stale. */
   reset(): void {
     this.buf.length = 0;
     this.times.length = 0;
@@ -53,6 +62,7 @@ export class Trades {
     if (this.statusEl) this.statusEl.textContent = "";
   }
 
+  /** Cancel the pending frame. */
   destroy(): void {
     if (this.raf) cancelAnimationFrame(this.raf);
   }

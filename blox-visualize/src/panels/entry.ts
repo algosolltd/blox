@@ -19,6 +19,13 @@ const KINDS: [OrderKind, string][] = [
   ["LIMIT", "Limit"], ["MARKET", "Market"], ["IOC", "IOC"], ["FOK", "FOK"], ["POST", "Post-only"],
 ];
 
+/**
+ * Order ticket: side, type, price, qty, and a submit button that calls
+ * `opts.onSubmit`.
+ *
+ * `new OrderEntry(host, opts)`, then `update(book)` on every book snapshot
+ * so an untouched price field tracks the mid. `destroy()` when done.
+ */
 export class OrderEntry {
   private readonly fmt: PriceFormat;
   private readonly symbol: string;
@@ -113,6 +120,7 @@ export class OrderEntry {
     this.updateNotional();
   }
 
+  /** Tear down this ticket's listeners. */
   destroy(): void {
     this.ac.abort();
   }

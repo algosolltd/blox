@@ -133,7 +133,10 @@ feed.subscribe({
     }
     if (a.pnl) {
       pnl.update(a.pnl);
-      chart.setAvg(a.pnl.avg);
+      // The server stops emitting pnl once the position is flat, so the chart
+      // never gets told "you're out" — without this gate, the last open's avg
+      // sticks around and bridges straight into the next open.
+      chart.setAvg(a.pnl.pos === 0 ? null : a.pnl.avg);
     }
   },
 

@@ -9,6 +9,12 @@ export type DepthOptions = PanelChrome & {
      */
     maxRangePct?: number;
 };
+/**
+ * Cumulative depth curve on a canvas, with a hover readout.
+ *
+ * `new Depth(host, opts)`, then `update(book)` on every book snapshot.
+ * `destroy()` disconnects the resize observer and cancels the pending frame.
+ */
 export declare class Depth {
     private readonly cv;
     private readonly ctx;
@@ -26,9 +32,12 @@ export declare class Depth {
     private h;
     private raf;
     constructor(host: HTMLElement, opts: DepthOptions);
+    /** A fresh book snapshot. Frame-batched — cheap to call on every tick. */
     update(book: Book): void;
+    /** Clear to an empty book — a reconnect, since the old one may be stale. */
     reset(): void;
     destroy(): void;
+    /** `"<spread> · <spread%>"`, or `""` with no two-sided book. */
     spreadText(): string;
     private frame;
     private resize;

@@ -2,6 +2,13 @@
 // a thousand ticks costs one DOM write of at most `renderMax` rows.
 import { fmtQty, fmtTime } from "../format.js";
 import { mount, q } from "../dom.js";
+/**
+ * Time & sales tape, with a trade-rate readout and your own fills
+ * highlighted (`TradeTick.mine`).
+ *
+ * `new Trades(host, opts)`, then `seed(trades)` for backfill and `push(t)`
+ * per live trade. `destroy()` when done.
+ */
 export class Trades {
     listEl;
     statusEl;
@@ -20,6 +27,7 @@ export class Trades {
       <div class="rows"></div>`, opts);
         this.listEl = q(host, ".rows");
     }
+    /** One live trade. */
     push(t) {
         this.buf.push(t);
         this.times.push(t.ts);
@@ -30,6 +38,7 @@ export class Trades {
         for (const t of trades)
             this.push(t);
     }
+    /** Clear the tape — a reconnect, since the old trades may be stale. */
     reset() {
         this.buf.length = 0;
         this.times.length = 0;
@@ -37,6 +46,7 @@ export class Trades {
         if (this.statusEl)
             this.statusEl.textContent = "";
     }
+    /** Cancel the pending frame. */
     destroy() {
         if (this.raf)
             cancelAnimationFrame(this.raf);

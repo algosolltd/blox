@@ -5,6 +5,13 @@ import { mount, q } from "../dom.js";
 const KINDS = [
     ["LIMIT", "Limit"], ["MARKET", "Market"], ["IOC", "IOC"], ["FOK", "FOK"], ["POST", "Post-only"],
 ];
+/**
+ * Order ticket: side, type, price, qty, and a submit button that calls
+ * `opts.onSubmit`.
+ *
+ * `new OrderEntry(host, opts)`, then `update(book)` on every book snapshot
+ * so an untouched price field tracks the mid. `destroy()` when done.
+ */
 export class OrderEntry {
     fmt;
     symbol;
@@ -94,6 +101,7 @@ export class OrderEntry {
             this.priceIn.value = this.fmt.fmtPx(Math.round((bb[0] + ba[0]) / 2));
         this.updateNotional();
     }
+    /** Tear down this ticket's listeners. */
     destroy() {
         this.ac.abort();
     }

@@ -10,6 +10,12 @@ type Row = { row: HTMLDivElement; bar: HTMLDivElement; qEl: HTMLElement; pxEl: H
 
 export type OrderBookOptions = PanelChrome & { fmt: PriceFormat };
 
+/**
+ * Two-sided order book ladder with depth bars.
+ *
+ * `new OrderBook(host, opts)`, then `update(book)` on every snapshot.
+ * `destroy()` disconnects the resize observer and cancels the pending frame.
+ */
 export class OrderBook {
   private readonly asksEl: HTMLElement;
   private readonly bidsEl: HTMLElement;
@@ -44,11 +50,13 @@ export class OrderBook {
     this.ro.observe(this.obEl);
   }
 
+  /** A fresh book snapshot. Frame-batched — cheap to call on every tick. */
   update(book: Book): void {
     this.book = book;
     if (!this.raf) this.raf = requestAnimationFrame(this.frame);
   }
 
+  /** Clear to an empty book — a reconnect, since the old one may be stale. */
   reset(): void {
     this.update({ bids: [], asks: [] });
   }

@@ -3,6 +3,13 @@
 // mark, which moves far faster than a 200px canvas can show.
 import { fmtCurrency, fmtQty } from "../format.js";
 import { mount, q } from "../dom.js";
+/**
+ * Live PnL readout (realized, unrealized, position, avg open, mark, volume)
+ * with a sparkline of total PnL over time.
+ *
+ * `new PnlPanel(host, opts)`, then `update(pnl)` on every account snapshot
+ * that carries a `pnl` field. `destroy()` when done.
+ */
 export class PnlPanel {
     els;
     spark;
@@ -44,15 +51,18 @@ export class PnlPanel {
         this.ro.observe(q(host, ".pnl"));
         this.timer = setInterval(() => this.sample(), opts.sampleMs ?? 1000);
     }
+    /** A fresh PnL snapshot. */
     update(pnl) {
         this.pnl = pnl;
         this.render();
     }
+    /** Clear the readout and sparkline — a reconnect, since the old numbers may be stale. */
     reset() {
         this.pnl = null;
         this.samples.length = 0;
         this.drawSparkline();
     }
+    /** Stop the sparkline's sample timer and disconnect the resize observer. */
     destroy() {
         clearInterval(this.timer);
         this.ro.disconnect();

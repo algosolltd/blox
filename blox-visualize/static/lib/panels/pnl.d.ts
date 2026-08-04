@@ -7,6 +7,13 @@ export type PnlOptions = PanelChrome & {
     maxSamples?: number;
     sampleMs?: number;
 };
+/**
+ * Live PnL readout (realized, unrealized, position, avg open, mark, volume)
+ * with a sparkline of total PnL over time.
+ *
+ * `new PnlPanel(host, opts)`, then `update(pnl)` on every account snapshot
+ * that carries a `pnl` field. `destroy()` when done.
+ */
 export declare class PnlPanel {
     private readonly els;
     private readonly spark;
@@ -17,8 +24,11 @@ export declare class PnlPanel {
     private pnl;
     private samples;
     constructor(host: HTMLElement, opts: PnlOptions);
+    /** A fresh PnL snapshot. */
     update(pnl: Pnl): void;
+    /** Clear the readout and sparkline — a reconnect, since the old numbers may be stale. */
     reset(): void;
+    /** Stop the sparkline's sample timer and disconnect the resize observer. */
     destroy(): void;
     private sample;
     private render;
