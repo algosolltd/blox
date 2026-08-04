@@ -1,6 +1,6 @@
 {
   "name": "blox-visualize",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Drop-in trading panels: market chart, order book, depth, tape, order entry, orders, PnL.",
   "type": "module",
   "license": "MIT",

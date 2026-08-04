@@ -1,15 +1,31 @@
+```
+ $$$$$$\  $$\                               $$\   $$\     $$\                     $$\                    
+$$  __$$\ $$ |                              \__|  $$ |    $$ |                    \__|                   
+$$ /  $$ |$$ | $$$$$$\   $$$$$$\   $$$$$$\  $$\ $$$$$$\   $$$$$$$\  $$$$$$\$$$$\  $$\  $$$$$$$\ $$$$$$\  
+$$$$$$$$ |$$ |$$  __$$\ $$  __$$\ $$  __$$\ $$ |\_$$  _|  $$  __$$\ $$  _$$  _$$\ $$ |$$  _____|\____$$\ 
+$$  __$$ |$$ |$$ /  $$ |$$ /  $$ |$$ |  \__|$$ |  $$ |    $$ |  $$ |$$ / $$ / $$ |$$ |$$ /      $$$$$$$ |
+$$ |  $$ |$$ |$$ |  $$ |$$ |  $$ |$$ |      $$ |  $$ |$$\ $$ |  $$ |$$ | $$ | $$ |$$ |$$ |     $$  __$$ |
+$$ |  $$ |$$ |\$$$$$$$ |\$$$$$$  |$$ |      $$ |  \$$$$  |$$ |  $$ |$$ | $$ | $$ |$$ |\$$$$$$$\\$$$$$$$ |
+\__|  \__|\__| \____$$ | \______/ \__|      \__|   \____/ \__|  \__|\__| \__| \__|\__| \_______|\_______|
+              $$\   $$ |                                                                                 
+              \$$$$$$  |                                                                                 
+               \______/                                                                                  
+ $$$$$$\            $$\             $$\     $$\                                                          
+$$  __$$\           $$ |            $$ |    \__|                                                         
+$$ /  \__| $$$$$$\  $$ |$$\   $$\ $$$$$$\   $$\  $$$$$$\  $$$$$$$\   $$$$$$$\                            
+\$$$$$$\  $$  __$$\ $$ |$$ |  $$ |\_$$  _|  $$ |$$  __$$\ $$  __$$\ $$  _____|                           
+ \____$$\ $$ /  $$ |$$ |$$ |  $$ |  $$ |    $$ |$$ /  $$ |$$ |  $$ |\$$$$$$\                             
+$$\   $$ |$$ |  $$ |$$ |$$ |  $$ |  $$ |$$\ $$ |$$ |  $$ |$$ |  $$ | \____$$\                            
+\$$$$$$  |\$$$$$$  |$$ |\$$$$$$  |  \$$$$  |$$ |\$$$$$$  |$$ |  $$ |$$$$$$$  |                           
+ \______/  \______/ \__| \______/    \____/ \__| \______/ \__|  \__|\_______/                            
+```
+
+[algorithmicasolutions.com](https://algorithmicasolutions.com)
+
 # blox-visualize
 
-Trading panels you can drop on a page, plus the demo server that feeds them.
-
-Two things live here:
-
-- **`src/`** — the `blox-visualize` npm package. Framework-agnostic panels that
-  build their own DOM, and one feed adapter that speaks the wire protocol.
-- **`*.go` + `static/`** — a demo: a TCP→WebSocket bridge onto `blox-server`,
-  serving a page that mounts the package.
-
-## The package
+Trading panels you can drop on a page: framework-agnostic, build their own
+DOM, and ship one feed adapter that speaks the wire protocol.
 
 ```js
 import { FeedAdapter, MarketChart, createPriceFormat } from "blox-visualize";
@@ -66,32 +82,24 @@ whole sequence and fires `onReset` first.
 
 A server that sends no `history` frame is fine — a timeout releases the hold.
 
-## Running the demo
-
-```sh
-npm install && npm run build:demo   # compile the package into static/lib
-cargo build --release -p blox-server
-(cd ../blox-sim && go build -o blox-sim .)
-go build -o blox-visualize . && ./blox-visualize
-```
-
-`./blox-visualize` with no flags spawns `blox-server` and `blox-sim` and serves
-the dashboard on <http://127.0.0.1:8080>. `-addr` attaches to a server you
-already run, `-no-sim` leaves the market to you, `-history` sets how many trades
-are retained and replayed to each new client (default 50000).
-
 ## Developing
 
 ```sh
-npm run check       # typecheck + the feed's backfill/ordering self-check
-npm run build:demo  # compile src/ into static/lib
-./blox-visualize -static-dir static   # serve the front end off disk
+npm install
+npm run check   # typecheck + the feed's backfill/ordering self-check
+npm run build   # compile src/ into dist/
 ```
 
-`static/` is baked into the binary by `//go:embed`, so a front-end change is
-invisible until you `go build` again — which is easy to forget and looks like
-your edit did nothing. `-static-dir static` serves from disk instead; use it
-while iterating, and rebuild the binary when you ship.
+## License
 
-`static/app.js` is page glue — topbar, status bar, splitters — and deliberately
-not part of the package.
+MIT. blox-visualize is free to use, modify, and ship in personal or
+commercial projects, with no obligation beyond keeping the copyright notice
+in the license text.
+
+blox-visualize is built and maintained by
+[Algorithmica Solutions](https://algorithmicasolutions.com).
+
+> **A small credit is appreciated, never required.** If blox-visualize ends
+> up running under the hood of something you ship — especially something
+> public or commercial — a line like *"Powered by blox-visualize"* in your
+> README, docs, or about page helps other people find their way back here.
