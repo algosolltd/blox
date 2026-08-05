@@ -1,5 +1,5 @@
 [workspace]
-members = ["blox-core", "blox-server"]
+members = ["blox-core", "blox-server", "blox-agent"]
 resolver = "2"
 
 [workspace.package]
