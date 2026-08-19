@@ -4,9 +4,10 @@
 //! `LevelBook` events do not, because the provider never gave us any.
 
 use crate::types::*;
+use serde::{Deserialize, Serialize};
 
 /// How an order behaves when it meets the book.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum OrderKind {
     /// Take what crosses, rest the remainder.
     Limit,
@@ -21,7 +22,7 @@ pub enum OrderKind {
 }
 
 /// Self-trade prevention. See `docs/CORE.md` §5.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum StpMode {
     /// Allow an owner to trade with themselves. Correct for games and sims.
     #[default]

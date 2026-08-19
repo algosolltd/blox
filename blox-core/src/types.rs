@@ -4,6 +4,8 @@
 //! in quantities, not in a convenience helper. See [`crate::decimal`] for
 //! conversion at the edges.
 
+use serde::{Deserialize, Serialize};
+
 /// Price, in canonical ticks. `1.08501` at tick_scale 5 is `108501`.
 pub type Ticks = i64;
 
@@ -24,18 +26,18 @@ pub type PositionId = u64;
 
 /// Interned instrument symbol. Strings live in the registry, never on the hot
 /// path.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
 pub struct InstrumentId(pub u16);
 
 /// Interned liquidity source.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
 pub struct ProviderId(pub u16);
 
 /// The book we own ourselves — customer orders, or a game's participants.
 /// See `DESIGN.md` D3: internal liquidity is just another provider.
 pub const INTERNAL: ProviderId = ProviderId(0);
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Side {
     Bid,

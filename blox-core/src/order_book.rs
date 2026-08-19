@@ -6,14 +6,15 @@
 //! arrival order) and cancel-by-id — in any real book the large majority of
 //! orders are cancelled, not filled.
 
-use std::collections::{HashMap, VecDeque};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, VecDeque};
 
 use crate::event::*;
 use crate::types::*;
 
 const NIL: u32 = u32::MAX;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct Level {
     price: Ticks,
     /// Always equal to the sum of `qty` over the level's list. Asserted.
@@ -24,7 +25,7 @@ struct Level {
     tail: u32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct Slot {
     id: OrderId,
     owner: OwnerId,
@@ -58,7 +59,7 @@ enum TakeResult {
     Aborted,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct OrderBook {
     /// DESCENDING — best bid at front.
     bids: VecDeque<Level>,
@@ -66,7 +67,7 @@ pub struct OrderBook {
     asks: VecDeque<Level>,
     slots: Vec<Slot>,
     free: u32,
-    index: HashMap<OrderId, u32>,
+    index: BTreeMap<OrderId, u32>,
     pub stp: StpMode,
 }
 
@@ -547,6 +548,27 @@ impl OrderBook {
             self.rest_order(id, s.owner, s.side, s.price, qty);
         }
         out.push(Change::Amended { id, qty });
+    }
+
+    /// Reduce an order to at most `qty`, never increase it.
+    ///
+    /// This is the safe boundary for user-facing reduce commands: if a fill
+    /// races the command and has already brought the order below the requested
+    /// size, the command is acknowledged with the current size and is a no-op.
+    pub fn reduce(&mut self, id: OrderId, qty: Lots, out: &mut Vec<Change>) {
+        let Some(&i) = self.index.get(&id) else {
+            out.push(Change::Rejected {
+                id,
+                reason: RejectReason::UnknownOrder,
+            });
+            return;
+        };
+        let current = self.slots[i as usize].qty;
+        if qty >= current {
+            out.push(Change::Amended { id, qty: current });
+            return;
+        }
+        self.amend(id, qty, out);
     }
 
     // ---- invariants -------------------------------------------------------
