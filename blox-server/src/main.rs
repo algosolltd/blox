@@ -1,341 +1,235 @@
-//! blox-server — the I/O shell around `blox-core`.
-//!
-//! The core has no sockets and no clock, so something has to own them. This is
-//! that something, in its smallest honest form: a TCP listener, one reader
-//! thread per connection, and **one thread that owns the engine**.
-//!
-//! ```text
-//!   conn 1 reader ─┐
-//!   conn 2 reader ─┼─▶ mpsc (the sequencer) ─▶ engine thread ─┬─▶ conn 1 writer
-//!   conn 3 reader ─┘                                          ├─▶ conn 2 writer
-//!                                                             └─▶ conn 3 writer
-//! ```
-//!
-//! The channel **is** the sequencer from `DESIGN.md` D4. Events race on the
-//! wire; the order they come out of this channel is arbitrary but recorded,
-//! and everything downstream is a pure fold over that order. The engine itself
-//! is single-writer with no locks (D12).
-//!
-//! Deliberately not here: TLS, auth, WebSocket, framing beyond newlines,
-//! persistence. This is a driver for tests and benchmarks, not a production
-//! surface — that would add the intent log, risk gate, and conflation from
-//! `DESIGN.md` D23–D26.
-
+mod engine;
 mod protocol;
-
-use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
-use std::sync::Arc;
-use std::thread;
-
-use blox_core::*;
-use protocol::{change_instrument, format_book, format_change, format_top, parse, Cmd};
-
-/// Bounded so a slow client cannot make the engine allocate without limit.
-/// Overflow disconnects that client (`DESIGN.md` D25): disconnect is
-/// recoverable, OOM is not.
+use engine::{Engine, MAX_REQUEST_ID_LEN};
+use protocol::{encode, Event, Reply, Request, WireChange, SCHEMA_VERSION};
+use std::{
+    collections::{HashMap, HashSet},
+    io::{self, BufRead, BufReader, BufWriter, Write},
+    net::{Shutdown, TcpListener, TcpStream},
+    sync::mpsc::{self, Receiver, SyncSender},
+    thread,
+};
 const CLIENT_QUEUE: usize = 8192;
-
+const ENGINE_QUEUE: usize = 65_536;
+const MAX_FRAME_BYTES: usize = 64 * 1024;
 type ConnId = u64;
-
 enum Msg {
-    Connect(ConnId, SyncSender<String>),
+    Connect(ConnId, SyncSender<String>, TcpStream),
     Line(ConnId, String),
     Disconnect(ConnId),
 }
-
-struct Conn {
+struct Client {
     tx: SyncSender<String>,
-    subs: HashSet<InstrumentId>,
-    /// Suppress `OK` acks.
-    quiet: bool,
-    /// Deliver order-lifecycle changes back to the submitter.
-    echo: bool,
-    /// Orders submitted here, so lifecycle changes route back to their owner.
-    orders: HashSet<OrderId>,
+    subs: HashSet<String>,
+    socket: TcpStream,
 }
-
 fn main() {
     let addr = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "127.0.0.1:7070".to_string());
-
-    let listener = match TcpListener::bind(&addr) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("bind {addr}: {e}");
-            std::process::exit(1);
-        }
-    };
-    // Report the resolved address so a harness can bind port 0 and read it.
-    let bound = listener.local_addr().expect("local_addr");
-    println!("listening {bound}");
+        .unwrap_or_else(|| "127.0.0.1:7070".into());
+    let listener = TcpListener::bind(&addr).unwrap_or_else(|e| panic!("bind {addr}: {e}"));
+    println!("listening {}", listener.local_addr().unwrap());
     let _ = std::io::stdout().flush();
-
-    let (tx, rx) = mpsc::channel::<Msg>();
+    let (tx, rx) = mpsc::sync_channel(ENGINE_QUEUE);
     thread::spawn(move || engine_loop(rx));
-
-    let next_id = Arc::new(AtomicU64::new(1));
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
-        let _ = stream.set_nodelay(true);
-        let id = next_id.fetch_add(1, Ordering::Relaxed);
+    for (id, stream) in listener.incoming().flatten().enumerate() {
         let tx = tx.clone();
-        thread::spawn(move || serve(id, stream, tx));
+        thread::spawn(move || serve(id as u64 + 1, stream, tx));
     }
 }
-
-/// One connection: a writer thread plus a read loop feeding the sequencer.
-fn serve(id: ConnId, stream: TcpStream, tx: Sender<Msg>) {
-    let Ok(write_half) = stream.try_clone() else {
-        return;
+fn serve(id: ConnId, stream: TcpStream, tx: SyncSender<Msg>) {
+    let write = match stream.try_clone() {
+        Ok(s) => s,
+        Err(_) => return,
     };
-    let (out_tx, out_rx) = mpsc::sync_channel::<String>(CLIENT_QUEUE);
-
-    let writer = thread::spawn(move || {
-        let mut w = BufWriter::new(write_half);
-        // Coalesce whatever is already queued into one flush. Under load this
-        // turns thousands of tiny writes into a handful of syscalls.
-        while let Ok(first) = out_rx.recv() {
-            if w.write_all(first.as_bytes()).is_err() || w.write_all(b"\n").is_err() {
-                return;
-            }
-            for more in out_rx.try_iter() {
-                if w.write_all(more.as_bytes()).is_err() || w.write_all(b"\n").is_err() {
-                    return;
-                }
-            }
-            if w.flush().is_err() {
-                return;
+    let (out_tx, out_rx) = mpsc::sync_channel(CLIENT_QUEUE);
+    let control = match stream.try_clone() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    thread::spawn(move || {
+        let mut w = BufWriter::new(write);
+        while let Ok(line) = out_rx.recv() {
+            if writeln!(w, "{line}").and_then(|_| w.flush()).is_err() {
+                break;
             }
         }
     });
-
-    if tx.send(Msg::Connect(id, out_tx)).is_err() {
+    if tx.send(Msg::Connect(id, out_tx, control)).is_err() {
         return;
     }
-
-    let reader = BufReader::new(stream);
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
-        if line.trim().is_empty() {
-            continue;
-        }
+    let mut reader = BufReader::new(stream);
+    while let Ok(Some(line)) = read_frame(&mut reader) {
         if tx.send(Msg::Line(id, line)).is_err() {
             break;
         }
     }
-
     let _ = tx.send(Msg::Disconnect(id));
-    let _ = writer.join();
 }
-
-/// The single writer. Owns the engine; nothing else touches it.
 fn engine_loop(rx: Receiver<Msg>) {
-    let mut engine = Engine::new();
-    let mut conns: HashMap<ConnId, Conn> = HashMap::new();
-    let mut changes: Vec<Change> = Vec::with_capacity(1024);
-    let mut applied: u64 = 0;
-    let mut errors: u64 = 0;
-    // Dead clients, collected after the borrow of `conns` ends.
-    let mut drop_list: Vec<ConnId> = Vec::new();
-
+    let mut engine = Engine::default();
+    let mut clients: HashMap<ConnId, Client> = HashMap::new();
     while let Ok(msg) = rx.recv() {
         match msg {
-            Msg::Connect(id, tx) => {
-                conns.insert(
+            Msg::Connect(id, tx, socket) => {
+                clients.insert(
                     id,
-                    Conn {
+                    Client {
                         tx,
                         subs: HashSet::new(),
-                        quiet: false,
-                        echo: true,
-                        orders: HashSet::new(),
+                        socket,
                     },
                 );
             }
             Msg::Disconnect(id) => {
-                conns.remove(&id);
+                clients.remove(&id);
             }
             Msg::Line(id, line) => {
-                let cmd = match parse(&line) {
-                    Ok(c) => c,
+                let req: Request = match serde_json::from_str(&line) {
+                    Ok(r) => r,
                     Err(e) => {
-                        errors += 1;
-                        send(&mut conns, &mut drop_list, id, format!("ERR {e}"));
-                        reap(&mut conns, &mut drop_list);
+                        send(
+                            &mut clients,
+                            id,
+                            encode(
+                                "",
+                                Reply::Error {
+                                    message: e.to_string(),
+                                },
+                            ),
+                        );
                         continue;
                     }
                 };
-
-                match cmd {
-                    Cmd::Event(ev) => {
-                        // Remember which connection owns which order id, so
-                        // fills and rejects route back to the submitter.
-                        if let Some(c) = conns.get_mut(&id) {
-                            match &ev {
-                                Event::New { id: oid, .. } => {
-                                    c.orders.insert(*oid);
-                                }
-                                Event::PlaceTrigger { trigger } => {
-                                    c.orders.insert(trigger.id);
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        changes.clear();
-                        engine.apply_into(&ev, &mut changes);
-                        applied += 1;
-
-                        fan_out(&mut conns, &mut drop_list, id, &changes);
-
-                        let quiet = conns.get(&id).map(|c| c.quiet).unwrap_or(true);
-                        if !quiet {
-                            send(&mut conns, &mut drop_list, id, "OK".to_string());
-                        }
-                    }
-                    Cmd::Top(i) => {
-                        let msg = format_top(i, &engine.top_of(i));
-                        send(&mut conns, &mut drop_list, id, msg);
-                    }
-                    Cmd::Book(i, depth) => {
-                        let msg = format_book(&engine.aggregate(i, depth.min(100)));
-                        send(&mut conns, &mut drop_list, id, msg);
-                    }
-                    Cmd::Sub(i) => {
-                        if let Some(c) = conns.get_mut(&id) {
-                            c.subs.insert(i);
-                        }
-                        send(&mut conns, &mut drop_list, id, "OK".to_string());
-                    }
-                    Cmd::Unsub(i) => {
-                        if let Some(c) = conns.get_mut(&id) {
-                            c.subs.remove(&i);
-                        }
-                        send(&mut conns, &mut drop_list, id, "OK".to_string());
-                    }
-                    Cmd::Quiet(on) => {
-                        if let Some(c) = conns.get_mut(&id) {
-                            c.quiet = on;
-                        }
-                        // Always acked, so a client can await the switch.
-                        send(&mut conns, &mut drop_list, id, "OK".to_string());
-                    }
-                    Cmd::Echo(on) => {
-                        if let Some(c) = conns.get_mut(&id) {
-                            c.echo = on;
-                        }
-                        send(&mut conns, &mut drop_list, id, "OK".to_string());
-                    }
-                    Cmd::Ping(tok) => {
-                        send(&mut conns, &mut drop_list, id, format!("PONG {tok}"));
-                    }
-                    Cmd::Stats => {
-                        let msg = format!(
-                            "STATS applied={applied} errors={errors} books={} conns={} dropped_deltas={}",
-                            engine.book_count(),
-                            conns.len(),
-                            engine.dropped_deltas()
-                        );
-                        send(&mut conns, &mut drop_list, id, msg);
-                    }
-                    Cmd::Check => {
-                        let msg = match engine.check() {
-                            Ok(()) => "OK invariants hold".to_string(),
-                            Err(e) => format!("ERR INVARIANT {e}"),
-                        };
-                        send(&mut conns, &mut drop_list, id, msg);
-                    }
-                    Cmd::Close => {
-                        conns.remove(&id);
+                if req.schema_version != SCHEMA_VERSION {
+                    send(
+                        &mut clients,
+                        id,
+                        encode(
+                            &req.request_id,
+                            Reply::Error {
+                                message: "unsupported schema_version".into(),
+                            },
+                        ),
+                    );
+                    continue;
+                }
+                if req.request_id.len() > MAX_REQUEST_ID_LEN {
+                    send(
+                        &mut clients,
+                        id,
+                        encode(
+                            "",
+                            Reply::Error {
+                                message: format!(
+                                    "request_id exceeds maximum {MAX_REQUEST_ID_LEN} bytes"
+                                ),
+                            },
+                        ),
+                    );
+                    continue;
+                }
+                let rid = req.request_id.clone();
+                let result = engine.execute(req.command);
+                if let Some(book_id) = result.subscribe {
+                    if let Some(client) = clients.get_mut(&id) {
+                        client.subs.insert(book_id);
                     }
                 }
-                reap(&mut conns, &mut drop_list);
-            }
-        }
-    }
-}
-
-/// Route changes: instrument-scoped ones to subscribers, order lifecycle back
-/// to whoever submitted the order.
-fn fan_out(
-    conns: &mut HashMap<ConnId, Conn>,
-    drop_list: &mut Vec<ConnId>,
-    origin: ConnId,
-    changes: &[Change],
-) {
-    for c in changes {
-        let text = format_change(c);
-        match change_instrument(c) {
-            Some(inst) => {
-                for (id, conn) in conns.iter() {
-                    if conn.subs.contains(&inst) {
-                        try_push(drop_list, *id, conn, &text);
-                    }
-                }
-            }
-            None => {
-                let owner = order_id_of(c)
-                    .and_then(|oid| {
-                        conns
-                            .iter()
-                            .find(|(_, c)| c.orders.contains(&oid))
-                            .map(|(id, _)| *id)
-                    })
-                    .unwrap_or(origin);
-                if let Some(conn) = conns.get(&owner) {
-                    // A client that pipelines without reading would otherwise
-                    // fill its own queue and be disconnected as a slow
-                    // consumer — correct behaviour (D25), but it makes
-                    // "submit as fast as possible" impossible to express.
-                    if conn.echo {
-                        try_push(drop_list, owner, conn, &text);
-                    }
+                send(&mut clients, id, encode(&rid, result.reply));
+                if let Some((book_id, changes)) = result.events {
+                    broadcast(&mut clients, &book_id, &changes);
                 }
             }
         }
     }
 }
-
-fn order_id_of(c: &Change) -> Option<OrderId> {
-    match c {
-        Change::Accepted { id }
-        | Change::Rejected { id, .. }
-        | Change::Filled { id, .. }
-        | Change::Cancelled { id, .. }
-        | Change::Amended { id, .. }
-        | Change::TriggerPlaced { id }
-        | Change::TriggerFired { id, .. }
-        | Change::TriggerCancelled { id, .. } => Some(*id),
-        _ => None,
+fn send(clients: &mut HashMap<ConnId, Client>, id: ConnId, line: String) {
+    if clients
+        .get(&id)
+        .is_some_and(|c| c.tx.try_send(line).is_err())
+    {
+        drop_client(clients, id);
     }
 }
-
-fn send(conns: &mut HashMap<ConnId, Conn>, drop_list: &mut Vec<ConnId>, id: ConnId, text: String) {
-    if let Some(conn) = conns.get(&id) {
-        try_push(drop_list, id, conn, &text);
-    }
-}
-
-/// Never blocks the engine on a client. A full queue means the client cannot
-/// keep up; mark it for disconnect rather than buffering without limit.
-fn try_push(drop_list: &mut Vec<ConnId>, id: ConnId, conn: &Conn, text: &str) {
-    match conn.tx.try_send(text.to_string()) {
-        Ok(()) => {}
-        Err(TrySendError::Full(_)) => {
-            eprintln!("conn {id}: too slow, disconnecting");
-            drop_list.push(id);
+fn broadcast(clients: &mut HashMap<ConnId, Client>, book_id: &str, changes: &[blox_core::Change]) {
+    let lines: Vec<_> = changes
+        .iter()
+        .map(|c| {
+            serde_json::to_string(&Event {
+                r#type: "event",
+                book_id,
+                change: WireChange::from(c),
+            })
+            .unwrap()
+        })
+        .collect();
+    clients.retain(|_, c| {
+        if !c.subs.contains(book_id) {
+            return true;
         }
-        Err(TrySendError::Disconnected(_)) => drop_list.push(id),
+        let keep = lines.iter().all(|l| c.tx.try_send(l.clone()).is_ok());
+        if !keep {
+            let _ = c.socket.shutdown(Shutdown::Both);
+        }
+        keep
+    });
+}
+
+fn drop_client(clients: &mut HashMap<ConnId, Client>, id: ConnId) {
+    if let Some(client) = clients.remove(&id) {
+        let _ = client.socket.shutdown(Shutdown::Both);
     }
 }
 
-fn reap(conns: &mut HashMap<ConnId, Conn>, drop_list: &mut Vec<ConnId>) {
-    for id in drop_list.drain(..) {
-        conns.remove(&id);
+fn read_frame(reader: &mut impl BufRead) -> io::Result<Option<String>> {
+    let mut frame = Vec::new();
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            if frame.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+        let take = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(available.len(), |position| position + 1);
+        if frame.len() + take > MAX_FRAME_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "frame too large",
+            ));
+        }
+        frame.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        if frame.last() == Some(&b'\n') {
+            frame.pop();
+            break;
+        }
+    }
+    if frame.last() == Some(&b'\r') {
+        frame.pop();
+    }
+    String::from_utf8(frame)
+        .map(Some)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "frame is not UTF-8"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_reader_accepts_json_line_and_rejects_oversize() {
+        let mut valid = BufReader::new(&b"{}\r\n"[..]);
+        assert_eq!(read_frame(&mut valid).unwrap().as_deref(), Some("{}"));
+        let oversized = vec![b'x'; MAX_FRAME_BYTES + 1];
+        let mut invalid = BufReader::new(oversized.as_slice());
+        assert_eq!(
+            read_frame(&mut invalid).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
     }
 }

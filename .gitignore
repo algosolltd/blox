@@ -2,25 +2,12 @@
 /target
 **/*.rs.bk
 
-# Go
-blox-sim/blox-sim
-blox-visualize/blox-visualize
-*.test
-
 # Compiled binaries (any platform) — never commit build output
 *.exe
 *.dll
 *.pdb
 
-# Node / blox-visualize package build
-blox-visualize/node_modules/
-blox-visualize/dist/
-# NB: blox-visualize/static/lib/ is deliberately NOT ignored — //go:embed bakes
-# static/ into the binary, so a clean checkout must be able to `go build`
-# without running npm first.
-
-# Bench + sim output
-/bench-out
+# Runtime output
 *.log
 
 # misc
