@@ -32,4 +32,7 @@ Documentation:
 - [server operations](docs/OPERATIONS.md)
 - [v2 foundations and execution-research status](docs/V2_RESEARCH_STATUS.md)
 
-MIT License.
+Proprietary — All Rights Reserved. Copyright (c) 2026 Algorithmica Solutions Ltd.
+See [LICENSE](LICENSE). blox may not be used, copied, modified, distributed,
+sublicensed or shipped in any project, personal or commercial, without a
+separate written commercial license. Licensing enquiries: info@algorithmicasolutions.com.
